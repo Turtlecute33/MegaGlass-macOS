@@ -67,6 +67,11 @@ if [[ -n "${MEGAGLASS_NOTARY_PROFILE:-}" ]]; then
 fi
 print "Built $APP ($(du -sh "$APP" | cut -f1))"
 
+LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
+# The build copy is not an installed app: without this, "Open With" and the default-browser
+# list show MegaGlass two times.
+"$LSREGISTER" -u "$APP" 2>/dev/null || true
+
 # --install copies the app to /Applications (quit MegaGlass first).
 if [[ "${1:-}" == "--install" ]]; then
   if pgrep -x MegaGlass >/dev/null; then
@@ -74,6 +79,6 @@ if [[ "${1:-}" == "--install" ]]; then
     exit 1
   fi
   ditto "$APP" /Applications/MegaGlass.app
-  /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f /Applications/MegaGlass.app
+  "$LSREGISTER" -f /Applications/MegaGlass.app
   print "Installed /Applications/MegaGlass.app"
 fi

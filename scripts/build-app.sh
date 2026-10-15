@@ -29,7 +29,42 @@ cp Resources/Info.plist "$APP/Contents/Info.plist"
 cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 strip -x "$APP/Contents/MacOS/MegaGlass"
 
-codesign --force --options runtime --sign - "$APP"
+# Signing, in this order:
+#  - MEGAGLASS_SIGN_IDENTITY="Developer ID Application: …" (and MEGAGLASS_NOTARY_PROFILE=<profile
+#    of `xcrun notarytool store-credentials`) for a notarized app.
+#  - The stable self-signed identity of scripts/make-signing-identity.zsh, when it exists: the
+#    same identity in every release keeps the Gatekeeper approval and the Keychain access after
+#    updates. SIGNED=1 requires it (releases).
+#  - Else ad hoc: Gatekeeper blocks a downloaded copy, and macOS asks again for Keychain access
+#    after each build.
+IDENTITY="${MEGAGLASS_SIGN_IDENTITY:--}"
+SIGNING="$HOME/.config/megaglass/macos-signing.keychain-db"
+if [[ "$IDENTITY" == "-" && -f "$SIGNING" ]]; then
+  security unlock-keychain -p "$(security find-generic-password -s megaglass-macos-signing -a keychain -w)" "$SIGNING"
+  codesign --force --options runtime --timestamp=none --sign MegaGlass --keychain "$SIGNING" "$APP"
+  codesign --verify --strict "$APP"
+elif [[ "$IDENTITY" == "-" && "${SIGNED:-0}" == 1 ]]; then
+  print -u2 "No signing identity: run scripts/make-signing-identity.zsh (once) or restore $SIGNING"
+  exit 1
+elif [[ "$IDENTITY" == "-" ]]; then
+  codesign --force --options runtime --sign - "$APP"
+else
+  codesign --force --options runtime --timestamp --sign "$IDENTITY" "$APP"
+  codesign --verify --strict --verbose=2 "$APP"
+fi
+if [[ -n "${MEGAGLASS_NOTARY_PROFILE:-}" ]]; then
+  if [[ "$IDENTITY" == "-" ]]; then
+    print -u2 "Notarization needs MEGAGLASS_SIGN_IDENTITY (a Developer ID Application identity)."
+    exit 1
+  fi
+  NOTARY_DIR="$(mktemp -d)"
+  ditto -c -k --keepParent "$APP" "$NOTARY_DIR/MegaGlass.zip"
+  xcrun notarytool submit "$NOTARY_DIR/MegaGlass.zip" --keychain-profile "$MEGAGLASS_NOTARY_PROFILE" --wait
+  rm -rf "$NOTARY_DIR"
+  # Stapling fails when Apple did not accept the app.
+  xcrun stapler staple "$APP"
+  spctl --assess --type execute --verbose=2 "$APP"
+fi
 print "Built $APP ($(du -sh "$APP" | cut -f1))"
 
 # --install copies the app to /Applications (quit MegaGlass first).

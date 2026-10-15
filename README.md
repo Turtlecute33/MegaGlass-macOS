@@ -1,3 +1,5 @@
+<img src="docs/logo.svg" width="96" alt="MegaGlass logo">
+
 # MegaGlass
 
 A native macOS client for MEGA, with a Liquid Glass interface. It runs on the official
@@ -10,21 +12,39 @@ macOS and tuned for speed.
   path bar, inspector, Quick Look previews, video and audio streaming
 - Upload (files, folders, drag and drop from Finder), download (files and folders)
 - Open many file and folder links at the same time, with or without an account;
-  password-protected links; download or import to your Cloud Drive
-- Links from the browser without an extension: "Send to MegaGlass" bookmark, opt-in
-  clipboard watch, drag and drop, `mega://` and `megaglass://` links, and an optional
-  default-browser router (MEGA links stay, other links go on to your browser)
+  password-protected links; download or import to your Cloud Drive. Each open link shows
+  its total size (a folder with all its subfolders)
+- Links from the browser without an extension: opt-in clipboard watch, drag and drop,
+  `mega://` links, and an optional default-browser router (MEGA links stay, other links
+  go on to your browser)
 - All-in-one Bypass for link protectors: the app first reads the link itself (short
   links, mirror domains, chains of pastes), then the API services run together (each one
-  starts when those before it fail or are slow), then the web services (bypass.city,
-  bypass.tools, bypass.vip, bypass.link), then the page itself. Up to 4 links run at
-  the same time and take turns in the panel. The MEGA links found open in the app
+  starts when those before it fail or are slow), then the web services in a hidden web
+  view for each link (bypass.city, bypass.tools), then, with you in the panel, the
+  services with hCaptcha (bypass.vip, bypass.link) and the page itself. Up to 4 links run at
+  the same time; links that wait for you do not count, and only they take turns in the
+  panel. The MEGA links found open in the app; when a link gives more MEGA links, only the
+  2 largest open (Settings > Bypass)
 - Two-way sync and one-way backup, with sync issue reporting
 - Transfers: pause, resume, cancel, retry, move to top, speed and progress
 - Public links (expiry date and password on Pro), sharing with contacts, contacts and invitations
 - Rubbish Bin (restore, delete, empty), file versions, labels, favourites, Recents, Backups
 - Account: storage and transfer quota, two-factor authentication (QR setup), password change
 - Menu bar status; syncs and transfers go on when the window is closed
+
+## Install
+
+```zsh
+brew install --cask turtlecute33/tap/megaglass   # install
+brew upgrade                                     # update, with all other Homebrew packages
+```
+
+Apple Silicon, macOS 26 or later. Or download the disk image from
+[Releases](https://github.com/Turtlecute33/MegaGlass-macOS/releases) and drag MegaGlass to
+Applications. The app is signed, but not notarized by Apple: on the first start macOS blocks
+it. Click Done, then System Settings → Privacy & Security → Open Anyway. All releases have the
+same signing identity, so Homebrew keeps this approval, and the app keeps its Keychain access,
+after an update. The Android app is [MegaGlass-Android](https://github.com/Turtlecute33/MegaGlass-Android).
 
 ## Build
 
@@ -75,9 +95,16 @@ screenshot driver are separate tools; the screenshot driver uses a saved account
 ## Privacy and security
 
 - No telemetry. Cloud storage uses the official MEGA SDK and its pinned API connection.
-  Bypass sends submitted protector links to enabled third-party services and loads their
-  pages; those services have their own privacy policies.
-- The session token is in the Keychain. The password is never stored.
+- Bypass opens each protector link and its result pages from your internet address, sends
+  the link to the enabled third-party services and loads their pages; those services have
+  their own privacy policies. Clipboard-watch and browser-router links go to Bypass with no
+  other step. API keys stay on their own API host (no key on a redirect to another host).
+  Bypass never opens addresses on this Mac or on the local network.
+- The session token and the API keys are in the login Keychain. The password is never
+  stored. Copied MEGA links stay on this Mac (no Universal Clipboard, marked as concealed
+  for clipboard history apps).
+- A logout with no network logs out on this Mac and deletes the local cache; the session
+  stays active on the MEGA server until it expires or you close it in MEGA on the web.
 - Thumbnails and previews use private cache folders. Each preview attempt has its own
   destination and becomes viewable only after SDK success. Files are removed when the
   preview is released; crash/termination leftovers are cleared at the next launch.
@@ -89,8 +116,16 @@ screenshot driver are separate tools; the screenshot driver uses a saved account
 
 - The macOS 27 SDK declares SwiftUI `@State` as a macro whose plugin ships only with
   Xcode. Without Xcode, `build-app.sh` uses the macOS 26.5 SDK from the Command Line Tools.
-- The app is signed ad hoc. After each rebuild, macOS can ask once for Keychain access
-  to the saved session. Select "Always Allow".
+- Releases: `./scripts/release.zsh <version>` (after you set the version in
+  `Resources/Info.plist` and commit). It builds the signed app and the disk image, publishes
+  the GitHub release, and `scripts/update-tap.zsh` points the cask in
+  [homebrew-tap](https://github.com/Turtlecute33/homebrew-tap) to it.
+- Signing: `scripts/make-signing-identity.zsh` (once) makes the stable self-signed identity
+  that `build-app.sh` uses; back up `~/.config/megaglass/macos-signing.keychain-db`. For a
+  notarized app, set `MEGAGLASS_SIGN_IDENTITY` (a Developer ID Application identity) and
+  `MEGAGLASS_NOTARY_PROFILE` (a `notarytool store-credentials` profile).
+- With no identity, the app is signed ad hoc. After each rebuild, macOS can ask once for
+  Keychain access to the saved session. Select "Always Allow".
 - Not included: Finder integration (needs Xcode and a paid developer account), chat
   and meetings.
 
@@ -103,6 +138,6 @@ screenshot driver are separate tools; the screenshot driver uses a saved account
 | `Sources/MegaGlass/Engine` | SDK wrapper, async requests, node snapshots, thumbnails |
 | `Sources/MegaGlass/Features` | Browser, transfers, sync, links, contacts, account, settings, preview |
 | `patches/` | Patch for the SDK bindings (logout signature with sync on) |
-| `scripts/` | Bootstrap, dependency build, app build, icon |
+| `scripts/` | Bootstrap, dependency build, app build, icon, signing identity, release, tap |
 
 Built on the MEGA SDK (BSD 2-Clause).

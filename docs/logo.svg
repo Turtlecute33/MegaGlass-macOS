@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="18 18 72 72" width="128" height="128">
+  <title>MegaGlass</title>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#FF3B30"/>
+      <stop offset=".5" stop-color="#D21F24"/>
+      <stop offset="1" stop-color="#8E0B10"/>
+    </linearGradient>
+  </defs>
+  <rect x="18" y="18" width="72" height="72" rx="20" fill="url(#bg)"/>
+  <path fill="#fff" d="M38.46,69.12A8.4,8.4 0,1 1,39.33,52.37A12.6,12.6 0,0 1,63.93,47.73A10.92,10.92 0,1 1,67.02,69.12Z"/>
+</svg>

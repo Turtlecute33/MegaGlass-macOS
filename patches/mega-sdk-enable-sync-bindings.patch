@@ -1,0 +1,27 @@
+diff --git a/bindings/ios/MEGASdk.mm b/bindings/ios/MEGASdk.mm
+index f75a4e9..c92786a 100644
+--- a/bindings/ios/MEGASdk.mm
++++ b/bindings/ios/MEGASdk.mm
+@@ -781,14 +781,22 @@ using namespace mega;
+ - (void)logoutWithDelegate:(id<MEGARequestDelegate>)delegate {
+     [NSNotificationCenter.defaultCenter postNotificationName:MEGAIsBeingLogoutNotification object:nil];
+     if (self.megaApi) {
++#ifdef ENABLE_SYNC
++        self.megaApi->logout(false, [self createDelegateMEGARequestListener:delegate singleListener:YES]);
++#else
+         self.megaApi->logout([self createDelegateMEGARequestListener:delegate singleListener:YES]);
++#endif
+     }
+ }
+ 
+ - (void)logout {
+     [NSNotificationCenter.defaultCenter postNotificationName:MEGAIsBeingLogoutNotification object:nil];
+     if (self.megaApi) {
++#ifdef ENABLE_SYNC
++        self.megaApi->logout(false, NULL);
++#else
+         self.megaApi->logout(NULL);
++#endif
+     }
+ }
+ 

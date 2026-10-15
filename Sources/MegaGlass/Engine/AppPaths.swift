@@ -36,6 +36,13 @@ nonisolated enum AppPaths {
     static func removeAll(at url: URL) {
         try? FileManager.default.removeItem(at: url)
     }
+
+    /// Empties a folder and keeps it (an engine still uses the folder).
+    static func removeContents(of url: URL) {
+        for item in (try? FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: nil)) ?? [] {
+            removeAll(at: item)
+        }
+    }
 }
 
 /// Stores the session token. The password is never stored.
@@ -60,6 +67,8 @@ nonisolated enum Keychain {
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
+            // No effect in the login Keychain (the item ACL controls access); it applies
+            // when a Developer ID build moves to the data protection Keychain.
             kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
             kSecValueData as String: Data(value.utf8),
         ]

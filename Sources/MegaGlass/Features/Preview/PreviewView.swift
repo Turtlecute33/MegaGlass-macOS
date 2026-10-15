@@ -251,33 +251,47 @@ struct PreviewView: View {
         player = nil
         seek = nil
         playingElsewhere = false
-        guard let request, let engine = app.engine(id: request.engineID),
-              let node = engine.node(handle) else {
+        // The picture of the last file must not stay under the name of this one.
+        state = .loading(nil)
+        guard let request, let engine = app.engine(id: request.engineID) else {
             state = .failed("The file is not available.")
             return
         }
+        let sdk = engine.sdk
+        // Node reads take the engine lock: not on the main thread.
+        guard let node = await EngineQueue.run({ sdk.node(forHandle: handle) }) else {
+            guard !Task.isCancelled, !invalidated else { return }
+            state = .failed("The file is not available.")
+            return
+        }
+        guard !Task.isCancelled, !invalidated else { return }
         let item = NodeItem(node)
         self.item = item
         prefetchNeighbors(of: handle, engine: engine)
 
         if item.kind.isStreamable {
-            let routes = streamRoutes(node, engine: engine)
+            let routes = await streamRoutes(node, engine: engine)
+            guard !Task.isCancelled, !invalidated else { return }
             if MediaPlayerView.unsupported.contains(item.fileExtension) {
                 // The other player does not tell when the stream fails: check the stream here first.
-                state = .loading(nil)
                 let check = await workingRoute(routes)
                 guard !Task.isCancelled, !invalidated else { return }
+                var stream: URL?
+                if let route = check.route { stream = await address(route) }
+                guard !Task.isCancelled, !invalidated else { return }
                 state = .cannotPlay(check.route == nil ? check.reason : "macOS cannot play \(item.fileExtension.uppercased()) files.",
-                                    stream: check.route.flatMap(address))
+                                    stream: stream)
                 return
             }
-            guard let first = routes.first, let url = address(first) else {
+            guard let first = routes.first, let url = await address(first) else {
                 state = .failed("The local stream did not start.")
                 return
             }
             await play(url, route: first, routes: routes)
             return
         }
+        // No media in this file: the local server can stop.
+        releaseStream()
 
         var showsPreview = false
         if item.kind == .image, item.hasPreview, let preview = await engine.thumbnails.preview(item.id) {
@@ -299,7 +313,8 @@ struct PreviewView: View {
         guard !Task.isCancelled, !invalidated else { return }
         let download = PreviewDownload()
         self.download = download
-        let source = engine === app.engine ? node : (engine.sdk.authorizeNode(node) ?? node)
+        let source = engine === app.engine ? node : await EngineQueue.run { sdk.authorizeNode(node) ?? node }
+        guard !Task.isCancelled, !invalidated else { return }
         let target: URL
         do {
             target = try await download.run(sdk: app.engine.sdk, node: source) { [weak download] progress in
@@ -382,7 +397,7 @@ struct PreviewView: View {
             guard !Task.isCancelled, !invalidated, self.player === player else { return }
             let check = await workingRoute(routes)
             guard !Task.isCancelled, !invalidated, self.player === player else { return }
-            if let working = check.route, working != route, let other = address(working) {
+            if let working = check.route, working != route, let other = await address(working) {
                 player.pause()
                 await play(other, route: working, routes: routes.filter { $0 != route })
                 return
@@ -422,46 +437,40 @@ struct PreviewView: View {
 
     /// The routes in order. A file of a folder link goes first through the account when you
     /// are logged in (its transfer limit), then through the link session (the network's limit).
-    private func streamRoutes(_ node: MEGANode, engine: MegaEngine) -> [StreamRoute] {
+    private func streamRoutes(_ node: MEGANode, engine: MegaEngine) async -> [StreamRoute] {
         var routes: [StreamRoute] = []
-        if engine !== app.engine, app.session.isSignedIn, let authorized = engine.sdk.authorizeNode(node) {
-            routes.append(StreamRoute(engine: app.engine, node: authorized, name: "your account"))
+        if engine !== app.engine, app.session.isSignedIn {
+            let sdk = engine.sdk
+            if let authorized = await EngineQueue.run({ sdk.authorizeNode(node) }) {
+                routes.append(StreamRoute(engine: app.engine, node: authorized, name: "your account"))
+            }
         }
         routes.append(StreamRoute(engine: engine, node: node, name: engine === app.engine ? "your account" : "the link"))
         return routes
     }
 
     /// The address of a route on its engine's local server. The server starts only when a route needs it.
-    private func address(_ route: StreamRoute) -> URL? {
-        let sdk = route.engine.sdk
-        if sdk.httpServerIsRunning() == 0 {
-            var started = false
-            for port in 47_810...47_820 where !started {
-                started = sdk.httpServerStart(true, port: port)
-            }
-            guard started else { return nil }
-            // HTTP_SERVER_ALLOW_CREATED_LOCAL_LINKS
-            sdk.httpServerSetRestrictedMode(1)
-        }
+    private func address(_ route: StreamRoute) async -> URL? {
         if !isStreaming {
             isStreaming = true
             app.streamingClients += 1
         }
-        return sdk.httpServerGetLocalLink(route.node)
+        return await StreamServer.link(route.node, sdk: route.engine.sdk)
     }
 
     /// The first route that gives data, or why none does.
     private func workingRoute(_ routes: [StreamRoute]) async -> (route: StreamRoute?, reason: String) {
         var failures: [String] = []
         for route in routes {
-            guard let url = address(route) else {
+            guard let url = await address(route) else {
                 failures.append("\(route.name): no local server")
                 continue
             }
             guard let failure = await Self.probe(url) else { return (route, "") }
             failures.append("\(route.name): \(failure)")
         }
-        if let wait = routes.map({ $0.engine.sdk.bandwidthOverquotaDelay }).filter({ $0 > 0 }).min() {
+        let sdks = routes.map(\.engine.sdk)
+        if let wait = await EngineQueue.run({ sdks.map(\.bandwidthOverquotaDelay) }).filter({ $0 > 0 }).min() {
             let minutes = max(1, Int((Double(wait) / 60).rounded(.up)))
             return (nil, "The MEGA transfer limit is used up. Playback works again in about \(minutes) min."
                 + (app.session.isSignedIn ? "" : " Log in to use the limit of your account."))
@@ -497,15 +506,47 @@ struct PreviewView: View {
         download?.cancel()
         download = nil
         seekHide?.cancel()
+        releaseStream()
+    }
+
+    /// The local server runs only while a window plays media: it serves decrypted data.
+    private func releaseStream() {
         guard isStreaming else { return }
         isStreaming = false
         app.streamingClients -= 1
         if app.streamingClients <= 0 {
             app.streamingClients = 0
             // This window can have used the server of the account and of a link.
-            for engine in [app.engine] + app.links.sessions.compactMap(\.engine) where engine.sdk.httpServerIsRunning() != 0 {
-                engine.sdk.httpServerStop()
+            StreamServer.stop([app.engine.sdk] + app.links.sessions.compactMap(\.engine?.sdk))
+        }
+    }
+}
+
+/// The local streaming servers of the engines. The calls take the engine lock, and a stop
+/// waits for open connections: they run in order, off the main thread.
+nonisolated enum StreamServer {
+    private static let queue = DispatchQueue(label: "megaglass.stream-server", qos: .userInitiated)
+
+    static func link(_ node: MEGANode, sdk: MEGASdk) async -> URL? {
+        await withCheckedContinuation { continuation in
+            queue.async {
+                if sdk.httpServerIsRunning() == 0 {
+                    var started = false
+                    for port in 47_810...47_820 where !started {
+                        started = sdk.httpServerStart(true, port: port)
+                    }
+                    guard started else { return continuation.resume(returning: nil) }
+                    // HTTP_SERVER_ALLOW_CREATED_LOCAL_LINKS
+                    sdk.httpServerSetRestrictedMode(1)
+                }
+                continuation.resume(returning: sdk.httpServerGetLocalLink(node))
             }
+        }
+    }
+
+    static func stop(_ sdks: [MEGASdk]) {
+        queue.async {
+            for sdk in sdks where sdk.httpServerIsRunning() != 0 { sdk.httpServerStop() }
         }
     }
 }
@@ -684,6 +725,7 @@ private struct SeekBar: View {
 
     private var moved: String {
         let delta = seek.time - seek.start
+        guard delta.isFinite, abs(delta) < 1e9 else { return "" }
         let amount = abs(delta) >= 60 ? Format.playtime(abs(delta)) : "\(Int(abs(delta).rounded())) s"
         return (delta < 0 ? "−" : "+") + amount
     }
@@ -743,16 +785,22 @@ enum ExternalPlayer {
 private struct QuickLookView: NSViewRepresentable {
     let url: URL
 
-    func makeNSView(context: Context) -> QLPreviewView {
-        let view = QLPreviewView(frame: .zero, style: .normal)!
+    func makeNSView(context: Context) -> NSView {
+        guard let view = QLPreviewView(frame: .zero, style: .normal) else { return NSView() }
         view.autostarts = true
         view.previewItem = url as NSURL
         return view
     }
 
-    func updateNSView(_ view: QLPreviewView, context: Context) {
+    func updateNSView(_ view: NSView, context: Context) {
+        guard let view = view as? QLPreviewView else { return }
         if (view.previewItem as? NSURL) as URL? != url {
             view.previewItem = url as NSURL
         }
+    }
+
+    /// Releases the preview item, so the file is not held open after the view goes.
+    static func dismantleNSView(_ view: NSView, coordinator: ()) {
+        (view as? QLPreviewView)?.close()
     }
 }

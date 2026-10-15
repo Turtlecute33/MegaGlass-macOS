@@ -59,8 +59,12 @@ struct FolderPicker: View {
     @State private var selection: UInt64?
     @State private var newFolder = false
     @State private var loadRevision = 0
+    /// The folder that `folders` lists.
+    @State private var loadedParent: UInt64?
+    /// Read once, off the main thread (the engine lock).
+    @State private var rootHandle: UInt64?
 
-    private var current: UInt64? { path.last?.id ?? app.engine.sdk.rootNode?.handle }
+    private var current: UInt64? { path.last?.id ?? rootHandle }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -129,9 +133,14 @@ struct FolderPicker: View {
     private func load() async {
         loadRevision += 1
         let revision = loadRevision
-        selection = nil
         let sdk = app.engine.sdk
+        if rootHandle == nil {
+            rootHandle = await EngineQueue.run { sdk.rootNode?.handle }
+            guard revision == loadRevision else { return }
+        }
         let parent = current
+        // A new folder clears the selection; a refresh of the same folder keeps it.
+        if parent != loadedParent { selection = nil }
         let result: [NodeItem] = await EngineQueue.run {
             guard let parent, let node = sdk.node(forHandle: parent) else { return [] }
             return sdk.nodes(sdk.children(forParent: node, order: MEGASortOrderType.defaultAsc.rawValue))
@@ -140,6 +149,8 @@ struct FolderPicker: View {
         }
         guard !Task.isCancelled, revision == loadRevision, parent == current else { return }
         folders = result
+        loadedParent = parent
+        if let selected = selection, !result.contains(where: { $0.id == selected }) { selection = nil }
     }
 }
 
@@ -173,7 +184,7 @@ struct ShareSheet: View {
                     Task {
                         await app.share(item.id, with: address, access: access)
                         email = ""
-                        load()
+                        await load()
                     }
                 }
                 .buttonStyle(.glassProminent)
@@ -194,7 +205,7 @@ struct ShareSheet: View {
                             Button {
                                 Task {
                                     await app.share(item.id, with: share.email, access: .accessUnknown)
-                                    load()
+                                    await load()
                                 }
                             } label: {
                                 Image(systemName: "xmark.circle.fill")
@@ -215,16 +226,20 @@ struct ShareSheet: View {
         }
         .padding(22)
         .frame(width: 520)
-        .onAppear(perform: load)
+        .task { await load() }
     }
 
-    private func load() {
+    private func load() async {
         let sdk = app.engine.sdk
-        guard let node = sdk.node(forHandle: item.id) else { return }
-        let list = sdk.outShares(for: node)
-        shares = (0..<list.size).compactMap { list.share(at: $0) }.compactMap { share in
-            guard let user = share.user else { return nil }
-            return (user, share.access, share.isPending)
+        let handle = item.id
+        // The share list takes the engine lock: not on the main thread.
+        shares = await EngineQueue.run {
+            guard let node = sdk.node(forHandle: handle) else { return [] }
+            let list = sdk.outShares(for: node)
+            return (0..<list.size).compactMap { list.share(at: $0) }.compactMap { share in
+                guard let user = share.user else { return nil }
+                return (email: user, access: share.access, pending: share.isPending)
+            }
         }
     }
 
@@ -305,9 +320,19 @@ struct LinkSheet: View {
             HStack {
                 Spacer()
                 Button("Done") { dismiss() }
-                Button("Copy") {
-                    Pasteboard.copy(display.joined(separator: "\n"))
-                    app.notify("Copied", symbol: "doc.on.doc")
+                if separateKey, !usePassword {
+                    // Two copies, so the key can go by another channel.
+                    Button(links.count == 1 ? "Copy Key" : "Copy Keys") {
+                        copy(LinkPresentation.keys(of: links), "Key copied")
+                    }
+                    .disabled(links.isEmpty || busy)
+                }
+                Button(separateKey && !usePassword ? (links.count == 1 ? "Copy Link" : "Copy Links") : "Copy") {
+                    if separateKey, !usePassword {
+                        copy(LinkPresentation.withoutKeys(links), "Link copied, without the key")
+                    } else {
+                        copy(display, "Copied")
+                    }
                 }
                 .buttonStyle(.glassProminent)
                 .keyboardShortcut(.defaultAction)
@@ -325,6 +350,11 @@ struct LinkSheet: View {
 
     private var display: [String] {
         LinkPresentation.lines(links: links, protected: protected, usePassword: usePassword, separateKey: separateKey)
+    }
+
+    private func copy(_ lines: [String], _ message: String) {
+        Pasteboard.copy(lines.joined(separator: "\n"))
+        app.notify(message, symbol: "doc.on.doc")
     }
 
     private func requestExport() {
@@ -349,7 +379,7 @@ struct LinkSheet: View {
             var result: [String] = []
             do {
                 for item in items {
-                    guard let node = sdk.node(forHandle: item.id) else {
+                    guard let node = await sdk.loadNode(item.id) else {
                         throw MegaFailure(code: -9, message: "The item is no longer available.")
                     }
                     let request = try await sdk.request { delegate in
@@ -391,6 +421,17 @@ nonisolated enum LinkPresentation {
         return links.flatMap { link -> [String] in
             let parts = link.split(separator: "#", maxSplits: 1).map(String.init)
             return parts.count == 2 ? [parts[0], "Key: " + parts[1]] : [link]
+        }
+    }
+
+    static func withoutKeys(_ links: [String]) -> [String] {
+        links.map { String($0.split(separator: "#", maxSplits: 1).first ?? Substring($0)) }
+    }
+
+    static func keys(of links: [String]) -> [String] {
+        links.compactMap { link in
+            let parts = link.split(separator: "#", maxSplits: 1)
+            return parts.count == 2 ? String(parts[1]) : nil
         }
     }
 }
@@ -446,7 +487,7 @@ struct VersionsSheet: View {
 
     private func restore(_ version: NodeItem) async {
         let sdk = app.engine.sdk
-        guard let node = sdk.node(forHandle: version.id) else { return }
+        guard let node = await sdk.loadNode(version.id) else { return }
         do {
             _ = try await sdk.request { sdk.restoreVersionNode(node, delegate: $0) }
             app.notify("Version restored", symbol: "clock.arrow.circlepath")

@@ -315,6 +315,84 @@ struct AuthenticationTests {
         #expect(session.startupMessage != nil)
     }
 
+    @Test func failedAccountLoadIsShownAndNotRemembered() async throws {
+        let (engine, root) = try makeEngine()
+        defer { engine.shutdown(); try? FileManager.default.removeItem(at: root) }
+        let auth = MockAuthentication(), credentials = MemoryCredentials()
+        auth.fetchFailure = MegaFailure(code: -3, message: "Fixture offline")
+        let session = Session(engine: engine, authentication: auth, credentials: credentials)
+        await session.start()
+        await #expect(throws: MegaFailure.self) {
+            try await session.signIn(email: "tester@example.invalid", password: "fixture", code: nil)
+        }
+        // The login screen that started the login is gone: the reason stays on the session.
+        #expect(session.startupMessage == "Fixture offline")
+        // A login that did not load the account does not restore at the next launch.
+        #expect(credentials.saves == 0)
+        #expect(credentials.token == nil)
+    }
+
+    @Test func cancelDuringRestoreKeepsSavedSession() async throws {
+        let (engine, root) = try makeEngine()
+        defer { engine.shutdown(); try? FileManager.default.removeItem(at: root) }
+        let auth = MockAuthentication(), credentials = MemoryCredentials()
+        credentials.token = "fixture"
+        let gate = AsyncResultGate<Void>()
+        auth.fetchGate = gate
+        let session = Session(engine: engine, authentication: auth, credentials: credentials)
+        let start = Task { await session.start() }
+        #expect(await eventually { if case .loadingAccount = session.phase { return true }; return false })
+        await session.cancelLoading()
+        #expect(session.phase == .signedOut)
+        #expect(auth.localLogoutCount >= 1)
+        // The late answer of the stopped load changes nothing.
+        gate.finish(.success(()))
+        await start.value
+        #expect(session.phase == .signedOut)
+        #expect(credentials.token == "fixture")
+        #expect(credentials.deletes == 0)
+        #expect(session.startupMessage == nil)
+    }
+
+    @Test func cancelDuringSignInAllowsNewLogin() async throws {
+        let (engine, root) = try makeEngine()
+        defer { engine.shutdown(); try? FileManager.default.removeItem(at: root) }
+        let auth = MockAuthentication(), credentials = MemoryCredentials()
+        let gate = AsyncResultGate<Void>()
+        auth.fetchGate = gate
+        let session = Session(engine: engine, authentication: auth, credentials: credentials)
+        await session.start()
+        let login = Task { try await session.signIn(email: "tester@example.invalid", password: "fixture", code: nil) }
+        #expect(await eventually { if case .loadingAccount = session.phase { return true }; return false })
+        await session.cancelLoading()
+        #expect(session.phase == .signedOut)
+        gate.finish(.success(()))
+        await #expect(throws: (any Error).self) { try await login.value }
+        #expect(credentials.saves == 0)
+        auth.fetchGate = nil
+        try await session.signIn(email: "tester@example.invalid", password: "fixture", code: nil)
+        #expect(session.isSignedIn)
+        #expect(credentials.saves == 1)
+        await session.signOut()
+    }
+
+    @Test func offlineLogoutDeletesLocalCacheAndExplains() async throws {
+        let (engine, root) = try makeEngine()
+        defer { engine.shutdown(); try? FileManager.default.removeItem(at: root) }
+        let cache = root.appending(path: "account-cache", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
+        try Data("fixture".utf8).write(to: cache.appending(path: "statecache.db"))
+        let auth = MockAuthentication(), credentials = MemoryCredentials()
+        auth.logoutFailure = MegaFailure(code: -3, message: "Offline")
+        let session = Session(engine: engine, authentication: auth, credentials: credentials, localCache: cache)
+        await session.start()
+        try await session.signIn(email: "tester@example.invalid", password: "fixture", code: nil)
+        await session.signOut()
+        #expect(session.phase == .signedOut)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: cache.path).isEmpty)
+        #expect(session.startupMessage?.contains("server") == true)
+    }
+
     @Test func keychainFailureIsReportedWithoutDiscardingLogin() async throws {
         let (engine, root) = try makeEngine()
         defer { engine.shutdown(); try? FileManager.default.removeItem(at: root) }
@@ -580,6 +658,108 @@ struct PlatformTests {
         #expect(LinkParser.links(in: "mega://folder/abc#key").count == 1)
         #expect(LinkParser.isPasswordProtected("https://mega.nz/#P!encrypted"))
         #expect(!LinkSorter.isMega("mega.nz.evil.invalid"))
+    }
+
+    @Test func bypassResultKeepsTheLargestLinks() {
+        let links = ["a", "b", "c", "d", "e"]
+        let sizes: [String: Int64] = ["a": 5, "b": 100, "c": 5, "e": 40]
+        #expect(LinkCenter.pick(links, sizes: sizes, count: 2) == ["b", "e"])
+        // Same size: the first link wins. No size (d): last.
+        #expect(LinkCenter.pick(links, sizes: sizes, count: 4) == ["b", "e", "a", "c"])
+        #expect(LinkCenter.pick(links, sizes: [:], count: 2) == ["a", "b"])
+    }
+
+    @Test(arguments: [
+        "http://localhost/", "http://127.0.0.1/", "http://127.1/", "http://2130706433/", "http://0x7f.1/",
+        "http://10.0.0.5/", "http://192.168.1.1/admin", "http://172.16.0.1/", "http://169.254.169.254/latest",
+        "http://100.64.0.1/", "http://0.0.0.0/", "http://[::1]/", "http://[fe80::1]/", "http://[fd00::1]/",
+        "http://[::ffff:192.168.1.1]/", "http://printer.local/", "http://router/", "http://nas.home.arpa/",
+        "file:///etc/hosts", "ftp://example.com/",
+    ]) func bypassNeverOpensLocalAddresses(address: String) throws {
+        #expect(!PublicAddress.allows(try #require(URL(string: address))))
+    }
+
+    @Test(arguments: [
+        "https://example.com/", "https://linkvertise.com/123/abc", "http://8.8.8.8/", "https://[2606:4700::1111]/",
+    ]) func bypassOpensPublicAddresses(address: String) throws {
+        #expect(PublicAddress.allows(try #require(URL(string: address))))
+    }
+
+    @Test func apiKeyStaysOnItsHost() throws {
+        let guardian = RedirectGuard(keyHeader: "x-api-key")
+        let api = try #require(URL(string: "https://api.bypass.tools/api/v1/bypass/direct"))
+        func redirect(to address: String) throws -> URLRequest? {
+            var request = URLRequest(url: try #require(URL(string: address)))
+            request.setValue("fixture-key", forHTTPHeaderField: "x-api-key")
+            return guardian.redirect(request, from: api)
+        }
+        #expect(try redirect(to: "https://api.bypass.tools/api/v2/bypass")?.value(forHTTPHeaderField: "x-api-key") == "fixture-key")
+        #expect(try redirect(to: "https://other.example/collect")?.value(forHTTPHeaderField: "x-api-key") == nil)
+        #expect(try redirect(to: "https://other.example/collect") != nil)
+        #expect(try redirect(to: "http://api.bypass.tools/insecure")?.value(forHTTPHeaderField: "x-api-key") == nil)
+        #expect(try redirect(to: "http://192.168.1.1/") == nil)
+        // Page reads have no key, but the same local-network rule.
+        #expect(RedirectGuard().redirect(URLRequest(url: try #require(URL(string: "http://127.0.0.1/"))), from: api) == nil)
+    }
+
+    @Test func separateKeyCopiesHaveNoKeyInTheLink() {
+        let links = ["https://mega.nz/file/abc#key1", "https://mega.nz/folder/def#key2"]
+        #expect(LinkPresentation.withoutKeys(links) == ["https://mega.nz/file/abc", "https://mega.nz/folder/def"])
+        #expect(LinkPresentation.keys(of: links) == ["key1", "key2"])
+    }
+
+    @Test func longRemoteNamesFitTheFileSystem() {
+        let name = String(repeating: "é", count: 300) + ".mp4"
+        let safe = LocalFileSafety.filename(name)
+        #expect(safe.utf8.count <= 255)
+        #expect(safe.hasSuffix(".mp4"))
+        #expect(LocalFileSafety.filename("short.txt") == "short.txt")
+    }
+
+    @Test func megaSchemeLinksNeedABoundary() {
+        #expect(LinkParser.links(in: "omega://folder/abc#key").isEmpty)
+        #expect(LinkParser.links(in: #"<a href="mega://folder/abc#key">x</a>"#).first?.0 == "https://mega.nz/folder/abc#key")
+    }
+
+    @Test func pageScanReadsLinksAndSurvivesAHungPage() async throws {
+        let browser = BypassBrowser()
+        defer { browser.stop() }
+        browser.webView.loadHTMLString(#"<a href="https://mega.nz/file/abc#key">file</a>"#, baseURL: nil)
+        await browser.waitUntilLoaded(timeout: 10)
+        let page = try #require(await browser.scan(resultSelector: nil))
+        #expect(page.mega == ["https://mega.nz/file/abc#key"])
+
+        // An endless script blocks the page: the scan gives up in time instead of waiting forever.
+        browser.webView.loadHTMLString("<script>setTimeout(() => { for (;;) {} }, 100)</script>", baseURL: nil)
+        await browser.waitUntilLoaded(timeout: 10)
+        try await Task.sleep(for: .milliseconds(500))
+        let start = ContinuousClock.now
+        #expect(await browser.scan(resultSelector: nil) == nil)
+        #expect(ContinuousClock.now - start < .seconds(10))
+    }
+
+    @Test func captchaServicesWaitForYou() {
+        let byID = Dictionary(uniqueKeysWithValues: BypassProvider.all.map { ($0.id, $0) })
+        #expect(byID["bypass.vip"]?.withYouOnly == true)
+        #expect(byID["bypass.link"]?.withYouOnly == true)
+        #expect(byID["bypass.city"]?.withYouOnly == false)
+        #expect(byID["bypass.tools"]?.withYouOnly == false)
+    }
+
+    @Test func bypassToolsRepliesAreRead() throws {
+        let provider = try #require(BypassProvider.all.first { $0.id == "bypass.tools-api" })
+        #expect(provider.needsKey && provider.isAPI)
+        func object(_ json: String) throws -> [String: Any] {
+            try #require(JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
+        }
+        let success = BypassCenter.APIReply(status: 200, object: try object(
+            #"{"status":"success","result":"https://mega.nz/file/abc#key","cached":false,"processTime":2341,"requestId":"r"}"#))
+        #expect(success.success == true)
+        #expect(success.result == "https://mega.nz/file/abc#key")
+        let quota = BypassCenter.APIReply(status: 403, object: try object(
+            #"{"status":"error","message":"Quota exceeded","code":"QUOTA_EXCEEDED"}"#))
+        #expect(quota.success == false)
+        #expect(quota.message == "Quota exceeded")
     }
 
     @Test func closingUnopenedLinkPreventsSDKWork() async throws {

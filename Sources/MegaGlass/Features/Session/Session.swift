@@ -152,6 +152,8 @@ final class Session {
     private(set) var generation = UUID()
     @ObservationIgnored private let authentication: any SessionAuthentication
     @ObservationIgnored private let credentials: any SessionCredentials
+    /// The engine folder with the node cache; deleted at logout (nil: tests keep it).
+    @ObservationIgnored private let localCache: URL?
     @ObservationIgnored var onError: ((any Error) -> Void)?
     @ObservationIgnored let engine: MegaEngine
     @ObservationIgnored var onSignedIn: (() -> Void)?
@@ -160,10 +162,11 @@ final class Session {
     private var sdk: MEGASdk { engine.sdk }
 
     init(engine: MegaEngine, authentication: (any SessionAuthentication)? = nil,
-         credentials: (any SessionCredentials)? = nil) {
+         credentials: (any SessionCredentials)? = nil, localCache: URL? = nil) {
         self.engine = engine
         self.authentication = authentication ?? SDKSessionAuthentication(sdk: engine.sdk)
         self.credentials = credentials ?? KeychainSessionCredentials()
+        self.localCache = localCache
         engine.onSessionExpired = { [weak self] in
             Task {
                 guard let self, !self.isSigningOut, !self.authenticating,
@@ -174,7 +177,7 @@ final class Session {
         }
         engine.onReloadNeeded = { [weak self] in
             Task {
-                guard let self, self.isSignedIn, !self.isSigningOut else { return }
+                guard let self, self.isSignedIn, !self.isSigningOut, !self.fetchingNodes else { return }
                 let generation = self.generation
                 do { try await self.fetchNodes() } catch {
                     guard generation == self.generation, !self.isSigningOut else { return }
@@ -206,11 +209,15 @@ final class Session {
             return
         }
         phase = .loadingAccount(nil)
+        let generation = generation
         var restored = false
         do {
             try await authentication.restore(session)
             restored = true
             try await fetchNodes()
+        } catch where generation != self.generation {
+            // Stopped with Cancel: the saved session stays for the next launch.
+            phase = .signedOut
         } catch let failure as MegaFailure {
             if restored { try? await authentication.localLogout() }
             // Keep the session for network problems; drop it when the server rejects it.
@@ -251,19 +258,30 @@ final class Session {
         generation = UUID()
         phase = .signingIn
         defer { authenticating = false }
+        let generation = generation
         var loggedIn = false
         do {
             try await authentication.login(email: email, password: password, code: code)
             loggedIn = true
-            if let token = authentication.dumpSession() {
-                // Failure to remember a session must be visible, but need not lose a login.
-                do { try credentials.save(token) } catch { onError?(error) }
-            }
             try await fetchNodes()
         } catch {
-            if loggedIn { try? await authentication.localLogout() }
+            guard generation == self.generation else {
+                // Stopped with Cancel, which already logged out on this Mac.
+                phase = .signedOut
+                throw CancellationError()
+            }
+            if loggedIn {
+                try? await authentication.localLogout()
+                // The login screen that started this is gone while the account loads.
+                startupMessage = error.localizedDescription
+            }
             phase = .signedOut
             throw error
+        }
+        // Only a login that loaded the account is remembered for the next launch.
+        if let token = authentication.dumpSession() {
+            // Failure to remember a session must be visible, but need not lose a login.
+            do { try credentials.save(token) } catch { onError?(error) }
         }
     }
 
@@ -276,6 +294,7 @@ final class Session {
         isSigningOut = true
         generation = UUID() // Invalidate profile, quota and progress callbacks immediately.
         defer { isSigningOut = false }
+        var offline = false
         do {
             try await authentication.logout()
         } catch {
@@ -284,8 +303,38 @@ final class Session {
                 onError?(error)
                 return
             }
+            offline = true
         }
         do { try credentials.delete() } catch { onError?(error) }
+        if offline {
+            // The engine keeps its node cache after a local logout; remove it here.
+            if let localCache { await EngineQueue.run { AppPaths.removeContents(of: localCache) } }
+            startupMessage = "MEGA could not be reached. You are logged out on this Mac, but the session stays active on the server until it expires. To end it now, close it in MEGA on the web (Settings > Security > Session history)."
+        }
+        leaveAccount()
+    }
+
+    /// Stops a login or an account load that does not finish (for example with no
+    /// network). The account logs out on this Mac only: a saved session stays for the
+    /// next launch.
+    func cancelLoading() async {
+        await Task { await cancelLoadingTransaction() }.value
+    }
+
+    private func cancelLoadingTransaction() async {
+        guard case .loadingAccount = phase, !isSigningOut else { return }
+        isSigningOut = true
+        generation = UUID() // The waiting login, restore or reload stops at its next check.
+        defer { isSigningOut = false }
+        do { try await authentication.localLogout() } catch {
+            onError?(error)
+            return
+        }
+        startupMessage = nil
+        leaveAccount()
+    }
+
+    private func leaveAccount() {
         engine.resetEvents()
         engine.thumbnails.clear()
         email = nil
@@ -298,7 +347,10 @@ final class Session {
     }
 
     private func fetchNodes() async throws {
-        guard !fetchingNodes, !isSigningOut, phase != .signedOut else { return }
+        guard !isSigningOut, phase != .signedOut else { throw CancellationError() }
+        guard !fetchingNodes else {
+            throw MegaFailure(code: MEGAErrorType.apiEAgain.rawValue, message: "The account is still loading. Try again in a moment.")
+        }
         fetchingNodes = true
         defer { fetchingNodes = false }
         let generation = generation

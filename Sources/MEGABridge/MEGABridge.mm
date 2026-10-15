@@ -1,8 +1,10 @@
 #import "MEGABridge.h"
 #import "MEGASdk+init.h"
 #import "MEGANode+init.h"
+#import "MEGATransfer+init.h"
 #import "MGGfxProcessor.h"
 #import <objc/runtime.h>
+#import <SystemConfiguration/SystemConfiguration.h>
 
 #include "megaapi.h"
 #include <chrono>
@@ -59,6 +61,13 @@ NSString *string(const char *value)
     return value ? [NSString stringWithUTF8String:value] ?: @"" : @"";
 }
 
+/// For SDK strings that the caller owns (delete[]).
+NSString *ownedString(const char *value)
+{
+    std::unique_ptr<const char[]> owned(value);
+    return string(value);
+}
+
 MegaRequestListener *completionListener(MGRequestCompletion completion)
 {
     MGRequestCompletion done = [completion copy];
@@ -66,7 +75,7 @@ MegaRequestListener *completionListener(MGRequestCompletion completion)
         NSInteger code = error->getErrorCode();
         int syncError = error->getSyncError();
         NSString *message = syncError != MegaSync::NO_SYNC_ERROR
-            ? string(MegaSync::getMegaSyncErrorCode(syncError))
+            ? ownedString(MegaSync::getMegaSyncErrorCode(syncError))
             : (code == MegaError::API_OK ? nil : string(error->getErrorString()));
         dispatch_async(dispatch_get_main_queue(), ^{
             done(code, message);
@@ -156,7 +165,7 @@ MegaRequestListener *completionListener(MGRequestCompletion completion)
         _type = (MGSyncType)sync->getType();
         _runState = (MGSyncRunState)sync->getRunState();
         _error = sync->getError();
-        _errorDescription = _error ? string(MegaSync::getMegaSyncErrorCode(sync->getError())) : @"";
+        _errorDescription = _error ? ownedString(MegaSync::getMegaSyncErrorCode(sync->getError())) : @"";
         _warning = sync->getWarning();
     }
     return self;
@@ -191,15 +200,34 @@ MegaRequestListener *completionListener(MGRequestCompletion completion)
     {
         _reason = stall->reason();
         _reasonDescription = string(stall->reasonDebugString());
-        NSMutableArray *local = [NSMutableArray array];
-        for (unsigned i = 0; i < stall->pathCount(false); i++) [local addObject:string(stall->path(false, (int)i))];
-        NSMutableArray *cloud = [NSMutableArray array];
-        for (unsigned i = 0; i < stall->pathCount(true); i++) [cloud addObject:string(stall->path(true, (int)i))];
-        _localPaths = local;
-        _cloudPaths = cloud;
+        // path() can be NULL; empty and repeated paths are not listed.
+        NSMutableOrderedSet *local = [NSMutableOrderedSet orderedSet];
+        for (unsigned i = 0; i < stall->pathCount(false); i++)
+        {
+            if (const char *path = stall->path(false, (int)i); path && *path) [local addObject:string(path)];
+        }
+        NSMutableOrderedSet *cloud = [NSMutableOrderedSet orderedSet];
+        for (unsigned i = 0; i < stall->pathCount(true); i++)
+        {
+            if (const char *path = stall->path(true, (int)i); path && *path) [cloud addObject:string(path)];
+        }
+        _localPaths = local.array;
+        _cloudPaths = cloud.array;
         _detectedCloudSide = stall->detectedCloudSide();
     }
     return self;
+}
+
+@end
+
+#pragma mark - MEGATransfer
+
+@implementation MEGATransfer (MGBridge)
+
+- (BOOL)mg_isSyncTransfer
+{
+    MegaTransfer *transfer = [self getCPtr];
+    return transfer && (transfer->isSyncTransfer() || transfer->isBackupTransfer());
 }
 
 @end
@@ -378,7 +406,8 @@ private:
             dispatch_async(dispatch_get_main_queue(), ^{ done(code, message); });
             return;
         }
-        NSString *deviceName = NSHost.currentHost.localizedName ?: @"Mac";
+        // The SDK thread waits here: read the computer name, with no network name lookup (NSHost).
+        NSString *deviceName = CFBridgingRelease(SCDynamicStoreCopyComputerName(NULL, NULL)) ?: @"Mac";
         api->setDeviceName(nullptr, deviceName.UTF8String, new BlockRequestListener(^(MegaRequest *, MegaError *error) {
             if (error->getErrorCode() == MegaError::API_OK) { prepareBackups(); return; }
             NSInteger code = error->getErrorCode();
@@ -432,7 +461,7 @@ private:
 
 + (NSString *)descriptionForSyncError:(NSInteger)error
 {
-    return string(MegaSync::getMegaSyncErrorCode((int)error));
+    return ownedString(MegaSync::getMegaSyncErrorCode((int)error));
 }
 
 @end

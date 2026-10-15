@@ -44,8 +44,7 @@ struct MegaGlassApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let app = AppModel()
 
-    /// Links from other apps, the bookmark, and the browser router:
-    /// - megaglass://open?links=… (the bookmark) and megaglass://bypass?links=…
+    /// Links from other apps and the browser router:
     /// - mega://… (like magnet links for a torrent app)
     /// - http(s) links when MegaGlass is the default browser: MEGA and protector links
     ///   stay here, every other link goes on to the real browser.
@@ -53,10 +52,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         var forward: [URL] = []
         for url in urls {
             switch url.scheme?.lowercased() {
-            case "megaglass":
-                let text = URLComponents(url: url, resolvingAgainstBaseURL: false)?
-                    .queryItems?.first { $0.name == "links" || $0.name == "link" }?.value ?? ""
-                app.handleIncoming(text, source: .bookmarklet, forceBypass: url.host() == "bypass")
             case "mega":
                 app.handleIncoming(url.absoluteString, source: .scheme)
             case "http", "https":
@@ -71,7 +66,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 forward.append(url)
             }
         }
-        BrowserRouter.forward(forward, saved: app.settings.forwardBrowser)
+        BrowserRouter.forward(forward, settings: app.settings)
+    }
+
+    /// The session and the saved links start with the app, also when macOS restores only a
+    /// preview window or the menu bar item (the main window also calls this; it runs once).
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        Task { await app.startOnce() }
     }
 
     /// Syncs and transfers go on after the last window closes.
@@ -150,7 +151,7 @@ struct AppCommands: Commands {
         }
 
         CommandGroup(after: .windowArrangement) {
-            Button("Pause All Transfers") { app.transfers.togglePauseAll() }
+            Button(app.transfers.isPaused ? "Resume All Transfers" : "Pause All Transfers") { app.transfers.togglePauseAll() }
         }
     }
 }

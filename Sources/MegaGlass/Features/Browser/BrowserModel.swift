@@ -282,7 +282,8 @@ final class BrowserModel {
         let token = MEGACancelToken()
         searchToken = token
         let sdk = engine.sdk
-        let parent = currentFolder ?? (isFolderLink ? sdk.rootNode?.handle : nil)
+        let folder = currentFolder
+        let inFolderLink = isFolderLink
         let order = sortKey.engineOrder(ascending: ascending)
         let key = sortKey
         let ascending = ascending
@@ -297,7 +298,7 @@ final class BrowserModel {
             } else {
                 results = await EngineQueue.run {
                     let filter: MEGASearchFilter
-                    if let parent {
+                    if let parent = folder ?? (inFolderLink ? sdk.rootNode?.handle : nil) {
                         filter = MEGASearchFilter(term: term, parentNodeHandle: parent, nodeType: .unknown,
                                                   category: .unknown, sensitiveFilter: .disabled,
                                                   favouriteFilter: .disabled, creationTimeFrame: nil,

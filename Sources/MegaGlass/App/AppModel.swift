@@ -28,6 +28,13 @@ nonisolated private enum OperationContext {
     @TaskLocal static var sessionGeneration: UUID?
 }
 
+/// The account reloads (the engine asked for it): an action stops between two steps.
+nonisolated private struct AccountReloading: LocalizedError {
+    var errorDescription: String? {
+        "The account was reloading, so the action stopped. Some items can be done already: check them, then try again."
+    }
+}
+
 /// App-wide state and the node operations that views share.
 @Observable
 final class AppModel {
@@ -63,7 +70,7 @@ final class AppModel {
         let engine = MegaEngine(kind: .account, id: "account", basePath: AppPaths.accountEngine,
                                 workerThreads: settings.workerThreads)
         self.engine = engine
-        session = Session(engine: engine)
+        session = Session(engine: engine, localCache: AppPaths.accountEngine)
         transfers = TransferCenter(engine: engine)
         syncs = SyncCenter(engine: engine)
         links = LinkCenter()
@@ -71,13 +78,19 @@ final class AppModel {
 
         session.onError = { [weak self] error in self?.show(error, title: "Session operation failed") }
         transfers.onError = { [weak self] error in self?.show(error, title: "Transfer operation failed") }
-        bypass.onError = { [weak self] error in self?.show(error, title: "The API key was not saved") }
+        bypass.onError = { [weak self] error, title in self?.show(error, title: title) }
         transfers.applyLimits(settings)
-        bypass.onLinks = { [weak self] links in
-            guard let self else { return }
-            let opened = self.links.open(text: links.joined(separator: "\n"), account: engine, workerThreads: settings.workerThreads)
-            linkToShow = opened.first?.id
-            notify(opened.count == 1 ? "Opened 1 MEGA link" : "Opened \(opened.count) MEGA links", symbol: "link")
+        bypass.onLinks = { [weak self] links, all in
+            Task { [weak self] in
+                guard let self else { return }
+                let chosen = await LinkCenter.largest(links, count: all ? 0 : settings.bypassKeepLargest, sdk: engine.sdk)
+                // In the background: the window stays on Bypass while the links open.
+                let opened = self.links.open(text: chosen.joined(separator: "\n"), account: engine, workerThreads: settings.workerThreads)
+                let text = chosen.count < links.count
+                    ? "The \(opened.count) largest of \(links.count) MEGA links open in Open Links"
+                    : opened.count == 1 ? "1 MEGA link opens in Open Links" : "\(opened.count) MEGA links open in Open Links"
+                notify(text, symbol: "link")
+            }
         }
         bypass.onNeedsYou = { [weak self] host in
             // Only after every automatic service failed.
@@ -89,6 +102,7 @@ final class AppModel {
             self?.handleIncoming(text, source: .clipboard)
         }
         clipboard.setEnabled(settings.clipboardWatch)
+        BrowserRouter.rememberDefault(in: settings)
         session.onSignedIn = { [weak self] in
             guard let self else { return }
             syncs.reload()
@@ -112,8 +126,11 @@ final class AppModel {
         AppPaths.removeAll(at: AppPaths.previews)
         links.restore(account: engine, workerThreads: settings.workerThreads)
         await session.start()
-        // Without an account, the restored links open as a guest.
-        if !session.isSignedIn, !links.sessions.isEmpty { session.isGuest = true }
+        // Without an account, the restored links open as a guest; say why the login failed.
+        if !session.isSignedIn, !links.sessions.isEmpty {
+            session.isGuest = true
+            if let message = session.startupMessage { alert = AlertItem(title: "You are not logged in", message: message) }
+        }
     }
 
     func engine(id: String) -> MegaEngine? {
@@ -158,18 +175,28 @@ final class AppModel {
     private func validateOperation() throws {
         try Task.checkCancellation()
         if let generation = OperationContext.sessionGeneration {
-            guard generation == session.generation, session.isSignedIn, !session.isSigningOut else {
+            // After a logout or another login, the action stops with no message.
+            guard generation == session.generation, !session.isSigningOut, session.phase != .signedOut else {
                 throw CancellationError()
             }
+            guard session.isSignedIn else { throw AccountReloading() }
         }
     }
 
-    private func requiredNode(_ handle: UInt64, in source: MegaEngine) throws -> MEGANode {
+    /// Node reads take the engine lock: they run on the engine read queue.
+    private func requiredNode(_ handle: UInt64, in source: MegaEngine) async throws -> MEGANode {
         try validateOperation()
-        guard let node = source.node(handle) else {
+        guard let node = await source.sdk.loadNode(handle) else {
             throw MegaFailure(code: -9, message: "The item is no longer available. Refresh and try again.")
         }
+        try validateOperation()
         return node
+    }
+
+    private func requiredNodes(_ handles: [UInt64], in source: MegaEngine) async throws -> [MEGANode] {
+        var nodes: [MEGANode] = []
+        for handle in handles { nodes.append(try await requiredNode(handle, in: source)) }
+        return nodes
     }
 
     func shutdown() {
@@ -193,7 +220,7 @@ final class AppModel {
         return opened
     }
 
-    enum LinkSource { case clipboard, bookmarklet, scheme, drop, paste }
+    enum LinkSource { case clipboard, scheme, drop, paste }
 
     /// Entry point for links from outside: MEGA links open, protector links go to Bypass.
     /// `forceBypass` sends every non-MEGA web link to Bypass (explicit requests).
@@ -234,7 +261,15 @@ final class AppModel {
                     source === self.engine ? node : (source.sdk.authorizeNode(node) ?? node)
                 }
             }
-            guard source !== self.engine || (generation == session.generation && session.isSignedIn && !session.isSigningOut) else { return }
+            if source === self.engine {
+                guard generation == session.generation, !session.isSigningOut, session.phase != .signedOut else { return }
+                guard session.isSignedIn else { show(AccountReloading(), title: "The download did not start"); return }
+            }
+            guard !nodes.isEmpty else {
+                show(MegaFailure(code: -9, message: "The items are no longer available. Refresh and try again."),
+                     title: "The download did not start")
+                return
+            }
             for node in nodes {
                 sdk.startDownloadNode(node, localPath: target, fileName: nil, appData: nil, startFirst: false,
                                       cancelToken: nil, collisionCheck: .fingerprint, collisionResolution: .newWithN)
@@ -272,16 +307,24 @@ final class AppModel {
     }
 
     func upload(_ urls: [URL], to folder: UInt64) {
-        guard !urls.isEmpty, let parent = engine.node(folder) else { return }
+        guard !urls.isEmpty else { return }
         guard urls.allSatisfy({ $0.isFileURL }) else {
             show(CocoaError(.fileReadUnsupportedScheme), title: "Choose local files to upload")
             return
         }
-        for url in urls {
-            engine.sdk.startUpload(withLocalPath: url.path, parent: parent, cancelToken: nil, options: MEGAUploadOptions())
+        let sdk = engine.sdk
+        Task {
+            guard let parent = await sdk.loadNode(folder) else {
+                show(MegaFailure(code: -9, message: "The folder is no longer available. Refresh and try again."),
+                     title: "The upload did not start")
+                return
+            }
+            for url in urls {
+                sdk.startUpload(withLocalPath: url.path, parent: parent, cancelToken: nil, options: MEGAUploadOptions())
+            }
+            notify(urls.count == 1 ? "Uploading \(urls[0].lastPathComponent)" : "Uploading \(urls.count) items",
+                   symbol: "arrow.up.circle")
         }
-        notify(urls.count == 1 ? "Uploading \(urls[0].lastPathComponent)" : "Uploading \(urls.count) items",
-               symbol: "arrow.up.circle")
     }
 
     func chooseAndUpload(to folder: UInt64, folders: Bool) {
@@ -298,7 +341,7 @@ final class AppModel {
 
     func createFolder(named name: String, in folder: UInt64, engine source: MegaEngine) async {
         await perform("The folder was not created") {
-            let parent = try requiredNode(folder, in: source)
+            let parent = try await requiredNode(folder, in: source)
             let sdk = source.sdk
             try validateOperation()
             _ = try await sdk.request { sdk.createFolder(withName: name, parent: parent, delegate: $0) }
@@ -307,7 +350,7 @@ final class AppModel {
 
     func rename(_ handle: UInt64, to name: String, engine source: MegaEngine) async {
         await perform("The item was not renamed") {
-            let node = try requiredNode(handle, in: source)
+            let node = try await requiredNode(handle, in: source)
             let sdk = source.sdk
             try validateOperation()
             _ = try await sdk.request { sdk.renameNode(node, newName: name, delegate: $0) }
@@ -315,15 +358,16 @@ final class AppModel {
     }
 
     func moveToRubbish(_ handles: [UInt64]) async {
-        guard let rubbish = engine.sdk.rubbishNode else { return }
-        guard await move(handles, to: rubbish.handle, quiet: true) else { return }
+        let sdk = engine.sdk
+        guard let rubbish = await EngineQueue.run({ sdk.rubbishNode?.handle }) else { return }
+        guard await move(handles, to: rubbish, quiet: true) else { return }
         notify(handles.count == 1 ? "Moved to Rubbish Bin" : "Moved \(handles.count) items to Rubbish Bin", symbol: "trash")
     }
 
     func deletePermanently(_ handles: [UInt64], engine source: MegaEngine) async {
         await perform("The item was not deleted") {
             let sdk = source.sdk
-            for node in try handles.map({ try requiredNode($0, in: source) }) {
+            for node in try await requiredNodes(handles, in: source) {
                 try validateOperation()
                 _ = try await sdk.request { sdk.remove(node, delegate: $0) }
             }
@@ -335,8 +379,11 @@ final class AppModel {
         let sdk = engine.sdk
         let succeeded = await perform("The item was not restored") {
             for item in items {
-                let node = try requiredNode(item.id, in: engine)
-                let target = engine.node(item.restoreHandle).flatMap { sdk.isNode(inRubbish: $0) ? nil : $0 } ?? sdk.rootNode
+                let node = try await requiredNode(item.id, in: engine)
+                let previous = item.restoreHandle
+                let target = await EngineQueue.run {
+                    sdk.node(forHandle: previous).flatMap { sdk.isNode(inRubbish: $0) ? nil : $0 } ?? sdk.rootNode
+                }
                 guard let target else { throw MegaFailure(code: -9, message: "The destination is unavailable.") }
                 try validateOperation()
                 _ = try await sdk.request { sdk.move(node, newParent: target, delegate: $0) }
@@ -350,8 +397,8 @@ final class AppModel {
     func move(_ handles: [UInt64], to folder: UInt64, quiet: Bool = false) async -> Bool {
         let sdk = engine.sdk
         let succeeded = await perform("The item was not moved") {
-            let target = try requiredNode(folder, in: engine)
-            for node in try handles.map({ try requiredNode($0, in: engine) }) where node.handle != folder {
+            let target = try await requiredNode(folder, in: engine)
+            for node in try await requiredNodes(handles, in: engine) where node.handle != folder {
                 try validateOperation()
                 _ = try await sdk.request { sdk.move(node, newParent: target, delegate: $0) }
             }
@@ -364,11 +411,13 @@ final class AppModel {
     func copy(_ handles: [UInt64], from source: MegaEngine, to folder: UInt64) async {
         let sdk = engine.sdk
         let succeeded = await perform(source === engine ? "The item was not copied" : "The item was not imported") {
-            let target = try requiredNode(folder, in: engine)
+            let target = try await requiredNode(folder, in: engine)
             for handle in handles {
-                var node = try requiredNode(handle, in: source)
+                var node = try await requiredNode(handle, in: source)
                 if source !== engine {
-                    guard let authorized = source.sdk.authorizeNode(node) else { throw MegaFailure(code: -11, message: "This link no longer allows importing the item.") }
+                    let link = source.sdk
+                    let original = node
+                    guard let authorized = await EngineQueue.run({ link.authorizeNode(original) }) else { throw MegaFailure(code: -11, message: "This link no longer allows importing the item.") }
                     node = authorized
                 }
                 try validateOperation()
@@ -382,7 +431,7 @@ final class AppModel {
     func importPublicNode(_ node: MEGANode, to folder: UInt64) async {
         let sdk = engine.sdk
         await perform("The file was not imported") {
-            let target = try requiredNode(folder, in: engine)
+            let target = try await requiredNode(folder, in: engine)
             try validateOperation()
             _ = try await sdk.request { sdk.copy(node, newParent: target, delegate: $0) }
             notify("Imported to your Cloud Drive", symbol: "square.and.arrow.down")
@@ -394,7 +443,7 @@ final class AppModel {
         let sdk = engine.sdk
         var result: [String] = []
         let succeeded = await perform("The link was not created") {
-            for node in try handles.map({ try requiredNode($0, in: engine) }) {
+            for node in try await requiredNodes(handles, in: engine) {
                 try validateOperation()
                 let request = try await sdk.request { delegate in
                     if let expires {
@@ -403,7 +452,10 @@ final class AppModel {
                         sdk.export(node, delegate: delegate)
                     }
                 }
-                if let link = request.link { result.append(link) }
+                guard let link = request.link else {
+                    throw MegaFailure(code: -9, message: "MEGA did not return a link for “\(node.name ?? "the item")”.")
+                }
+                result.append(link)
             }
         }
         guard succeeded, !result.isEmpty else { return }
@@ -424,7 +476,7 @@ final class AppModel {
     func removeLinks(_ handles: [UInt64]) async {
         let sdk = engine.sdk
         let succeeded = await perform("The link was not removed") {
-            for node in try handles.map({ try requiredNode($0, in: engine) }) {
+            for node in try await requiredNodes(handles, in: engine) {
                 try validateOperation()
                 _ = try await sdk.request { sdk.disableExport(node, delegate: $0) }
             }
@@ -436,7 +488,7 @@ final class AppModel {
     func share(_ folder: UInt64, with email: String, access: MEGAShareType) async {
         let sdk = engine.sdk
         await perform("The folder was not shared") {
-            guard let node = engine.node(folder) else { return }
+            let node = try await requiredNode(folder, in: engine)
             try validateOperation()
             _ = try await sdk.request { sdk.share(node, withEmail: email, level: access.rawValue, delegate: $0) }
             notify(access == .accessUnknown ? "Access removed" : "Shared with \(email)", symbol: "person.2")
@@ -446,7 +498,7 @@ final class AppModel {
     func setLabel(_ handles: [UInt64], _ label: NodeLabel) async {
         let sdk = engine.sdk
         await perform("The label was not changed") {
-            for node in try handles.map({ try requiredNode($0, in: engine) }) {
+            for node in try await requiredNodes(handles, in: engine) {
                 if label == .none {
                     try validateOperation()
                 _ = try await sdk.request { sdk.resetNodeLabel(node, delegate: $0) }
@@ -462,7 +514,7 @@ final class AppModel {
     func setFavourite(_ handles: [UInt64], _ favourite: Bool) async {
         let sdk = engine.sdk
         await perform("The favourite was not changed") {
-            for node in try handles.map({ try requiredNode($0, in: engine) }) {
+            for node in try await requiredNodes(handles, in: engine) {
                 try validateOperation()
                 _ = try await sdk.request { sdk.setNodeFavourite(node, favourite: favourite, delegate: $0) }
             }

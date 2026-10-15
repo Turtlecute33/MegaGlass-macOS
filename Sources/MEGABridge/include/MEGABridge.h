@@ -26,6 +26,11 @@ NS_ASSUME_NONNULL_BEGIN
 
 @end
 
+@interface MEGATransfer (MGBridge)
+/// The sync engine owns the transfer (two-way sync or backup).
+@property (nonatomic, readonly) BOOL mg_isSyncTransfer NS_SWIFT_NAME(isSyncTransfer);
+@end
+
 typedef NS_ENUM(NSInteger, MGSyncType) {
     MGSyncTypeTwoWay = 3,
     MGSyncTypeBackup = 4,

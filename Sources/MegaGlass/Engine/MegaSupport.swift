@@ -106,6 +106,11 @@ nonisolated extension MEGASdk {
         }
     }
 
+    /// node(forHandle:) takes the engine lock: this one reads on the engine read queue.
+    func loadNode(_ handle: UInt64) async -> MEGANode? {
+        await EngineQueue.run { [self] in node(forHandle: handle) }
+    }
+
     func nodes(_ list: MEGANodeList?) -> [MEGANode] {
         guard let list else { return [] }
         return (0..<list.size).compactMap { list.node(at: $0) }

@@ -122,9 +122,14 @@ struct ContactsView: View {
 
     private func reply(_ request: RequestRow, _ action: MEGAReplyAction) {
         let sdk = app.engine.sdk
-        let list = sdk.incomingContactRequests()
-        guard let target = (0..<list.size).compactMap({ list.contactRequest(at: $0) }).first(where: { $0.handle == request.id }) else { return }
+        let id = request.id
         Task {
+            // The request lists take the engine lock: not on the main thread.
+            let target = await EngineQueue.run {
+                let list = sdk.incomingContactRequests()
+                return (0..<list.size).compactMap { list.contactRequest(at: $0) }.first { $0.handle == id }
+            }
+            guard let target else { return }
             do {
                 _ = try await sdk.request { sdk.reply(target, action: action, delegate: $0) }
             } catch {
@@ -147,8 +152,9 @@ struct ContactsView: View {
 
     private func remove(_ contact: ContactRow) {
         let sdk = app.engine.sdk
-        guard let user = sdk.contact(forEmail: contact.email) else { return }
+        let email = contact.email
         Task {
+            guard let user = await EngineQueue.run({ sdk.contact(forEmail: email) }) else { return }
             do {
                 _ = try await sdk.request { sdk.removeContactUser(user, delegate: $0) }
             } catch {

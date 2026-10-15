@@ -81,7 +81,13 @@ struct BypassView: View {
                 JobRow(job: job)
                     .contextMenu {
                         if !job.megaLinks.isEmpty {
-                            Button("Open MEGA Links") { center.openLinks(of: job) }
+                            let keep = app.settings.bypassKeepLargest
+                            if keep > 0, job.megaLinks.count > keep {
+                                Button(keep == 1 ? "Open the Largest MEGA Link" : "Open the \(keep) Largest MEGA Links") { center.openLinks(of: job) }
+                                Button("Open All \(job.megaLinks.count) MEGA Links") { center.openLinks(of: job, all: true) }
+                            } else {
+                                Button("Open MEGA Links") { center.openLinks(of: job) }
+                            }
                             Button("Copy MEGA Links") { Pasteboard.copy(job.megaLinks.joined(separator: "\n")) }
                         }
                         if job.isFinished { Button("Try Again") { center.retry(job) } }
@@ -95,9 +101,20 @@ struct BypassView: View {
         .overlay {
             if center.jobs.isEmpty {
                 ContentUnavailableView("No Links", systemImage: "link.badge.plus",
-                                       description: Text("Paste links above, drop them here, or use the bookmark."))
+                                       description: Text("Paste links above, or drop them here."))
             }
         }
+    }
+
+    /// Ads on or off in the web pages; the page of the panel loads again.
+    private var adToggle: some View {
+        @Bindable var settings = app.settings
+        return Toggle(isOn: $settings.bypassBlockAds) {
+            Image(systemName: settings.bypassBlockAds ? "shield.lefthalf.filled" : "shield.slash")
+        }
+        .toggleStyle(.button)
+        .help(settings.bypassBlockAds ? "Ads are blocked. Click to allow them (for a locker that needs them)." : "Ads are allowed. Click to block them.")
+        .onChange(of: settings.bypassBlockAds) { center.applyAdBlocking(reloadPanel: true) }
     }
 
     private var panel: some View {
@@ -111,6 +128,7 @@ struct BypassView: View {
                         Text(job.status.text).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                     }
                     Spacer()
+                    adToggle
                     Button("Collect Now") { center.collectNow() }
                         .help("Take the MEGA links that the page shows now")
                     Button("Next Service") { center.skipService() }
@@ -122,6 +140,7 @@ struct BypassView: View {
                         .font(.callout)
                         .foregroundStyle(.secondary)
                     Spacer()
+                    adToggle
                 }
             }
             .buttonStyle(.glass)

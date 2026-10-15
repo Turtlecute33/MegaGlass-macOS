@@ -94,6 +94,9 @@ nonisolated struct BypassProvider: Identifiable, Hashable, Sendable {
         api("bypasslink.dev", "bypasslink.dev API",
             BypassAPI(method: .postJSON, endpoint: "https://api.bypasslink.dev/v1/bypass", keyHeader: "Authorization", bearer: true, headers: [:]),
             "API token from bypasslink.dev."),
+        api("bypass.tools-api", "bypass.tools API",
+            BypassAPI(method: .postJSON, endpoint: "https://api.bypass.tools/api/v1/bypass/direct", keyHeader: "x-api-key", bearer: false, headers: [:]),
+            "API key from bypass.tools (pay as you go)."),
         BypassProvider(id: "bypass.city", name: "bypass.city", kind: .page,
                        start: "https://bypass.city/bypass?bypass={url}", input: nil, submit: nil, result: nil,
                        note: "Web page (captcha). Resolves Admaven lockers."),
@@ -102,12 +105,12 @@ nonisolated struct BypassProvider: Identifiable, Hashable, Sendable {
                        note: "Web page, in the background (Turnstile check)."),
         BypassProvider(id: "bypass.vip", name: "bypass.vip", kind: .page,
                        start: "https://bypass.vip/", input: "#bypassInput", submit: "#submitButton", result: nil,
-                       note: "Web page (hCaptcha): only with you, at the end."),
+                       note: "Web page (hCaptcha): only with you, at the end.", withYouOnly: true),
         BypassProvider(id: "bypass.link", name: "bypass.link", kind: .page,
                        start: "https://bypass.link/",
                        input: "input[name=url], input[name=link], input[type=url], #generator input[type=text]:not([readonly])",
                        submit: "#gocaptcha, #generate-button", result: "#bypass_link",
-                       note: "Web page (hCaptcha): only with you, at the end."),
+                       note: "Web page (hCaptcha): only with you, at the end.", withYouOnly: true),
         BypassProvider(id: "direct", name: "The page itself", kind: .direct,
                        start: "", input: nil, submit: nil, result: nil,
                        note: "Last resort: you do the steps of the page in the panel; MEGA links are collected."),
@@ -137,8 +140,22 @@ final class BypassJob: Identifiable {
     /// The link after the HTTP redirects (a mirror domain goes to the locker itself).
     @ObservationIgnored var target: String?
     @ObservationIgnored var task: Task<Void, Never>?
+    /// The private web view of step 1, hidden. Each link has its own, so links do not wait
+    /// for each other or for the panel.
+    @ObservationIgnored var browser: BypassBrowser?
+    /// Step 2: the link waits for you, not for a service; it does not take a place of the
+    /// links that run at the same time.
+    @ObservationIgnored var waitsForYou = false
+    /// Result pages of step 1 with no MEGA link: the link can show only after a click or a
+    /// timer. Step 2 shows them to you first.
+    @ObservationIgnored var resultPages: [URL] = []
 
     init(link: String) { self.link = link }
+
+    func releaseBrowser() {
+        browser?.stop()
+        browser = nil
+    }
 
     /// Marks a link as tried. False when it was tried before or the job has done enough steps.
     func visit(_ url: URL) -> Bool {
@@ -159,7 +176,8 @@ final class BypassJob: Identifiable {
 /// web services in the background, then the result pages.
 /// Step 2, only when step 1 fails: the services that wanted a captcha, then the page
 /// itself, in the panel with you.
-/// The panel (the web view) is one: the jobs take turns there.
+/// Step 1 runs in a hidden web view for each link. The panel (one web view) is only for
+/// step 2: there the links take turns.
 @Observable
 final class BypassCenter {
     private(set) var jobs: [BypassJob] = []
@@ -169,22 +187,21 @@ final class BypassCenter {
     /// True while the panel waits for you.
     private(set) var waitingForYou = false
 
-    @ObservationIgnored var onError: ((any Error) -> Void)?
-    @ObservationIgnored var onLinks: (([String]) -> Void)?
+    @ObservationIgnored var onError: ((any Error, String) -> Void)?
+    /// The MEGA links of a job. `all` false: only the largest open (Settings > Bypass).
+    @ObservationIgnored var onLinks: ((_ links: [String], _ all: Bool) -> Void)?
     @ObservationIgnored var onNeedsYou: ((String) -> Void)?
     @ObservationIgnored private let settings: AppSettings
     @ObservationIgnored private var panelBusy = false
     @ObservationIgnored private var panelQueue: [(id: UUID, turn: CheckedContinuation<Bool, Never>)] = []
     @ObservationIgnored private var skipRequested = false
     @ObservationIgnored private var collectRequested = false
-    @ObservationIgnored private let session: URLSession = {
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.httpCookieStorage = nil
-        configuration.urlCache = nil
-        configuration.timeoutIntervalForRequest = 60
-        configuration.httpAdditionalHeaders = ["User-Agent": BypassBrowser.userAgent]
-        return URLSession(configuration: configuration)
-    }()
+    @ObservationIgnored private let session: URLSession
+    /// Tests: keys without the Keychain.
+    @ObservationIgnored private let keyLookup: ((String) -> String?)?
+    /// Tests: no web views (no page services, no result pages, no step 2).
+    @ObservationIgnored private let usesWebViews: Bool
+    @ObservationIgnored private var adRules: WKContentRuleList?
 
     private static let keychainService = "app.megaglass.bypass"
 
@@ -199,8 +216,46 @@ final class BypassCenter {
         "cloudfront.net", "profitableratecpmnetwork.com",
     ]
 
-    init(settings: AppSettings) {
+    init(settings: AppSettings, configuration: URLSessionConfiguration = .ephemeral,
+         keyLookup: ((String) -> String?)? = nil, usesWebViews: Bool = true) {
         self.settings = settings
+        self.keyLookup = keyLookup
+        self.usesWebViews = usesWebViews
+        configuration.httpCookieStorage = nil
+        configuration.urlCache = nil
+        configuration.timeoutIntervalForRequest = 60
+        configuration.httpAdditionalHeaders = ["User-Agent": BypassBrowser.userAgent]
+        session = URLSession(configuration: configuration)
+        if usesWebViews {
+            Task {
+                adRules = await AdBlocker.rules()
+                applyAdBlocking()
+            }
+        }
+    }
+
+    // MARK: Web views
+
+    /// A new web view, with the ad rules when they are on.
+    private func makeBrowser() -> BypassBrowser {
+        let made = BypassBrowser()
+        made.blockAds(settings.bypassBlockAds ? adRules : nil)
+        return made
+    }
+
+    private func backgroundBrowser(_ job: BypassJob) -> BypassBrowser {
+        if let browser = job.browser { return browser }
+        let made = makeBrowser()
+        job.browser = made
+        return made
+    }
+
+    /// Applies the ad setting to the open web views; it acts from their next page.
+    /// `reloadPanel` loads the page of the panel again, so you see the change at once.
+    func applyAdBlocking(reloadPanel: Bool = false) {
+        let rules = settings.bypassBlockAds ? adRules : nil
+        for view in [browser].compactMap({ $0 }) + jobs.compactMap(\.browser) { view.blockAds(rules) }
+        if reloadPanel, current != nil { browser?.webView.reload() }
     }
 
     // MARK: Services and keys
@@ -233,7 +288,13 @@ final class BypassCenter {
     }
 
     func key(for provider: BypassProvider) -> String? {
-        Keychain.read(account: provider.id, service: Self.keychainService)
+        try? loadKey(for: provider)
+    }
+
+    /// Throws when the Keychain refuses the read; nil when there is no key.
+    func loadKey(for provider: BypassProvider) throws -> String? {
+        if let keyLookup { return keyLookup(provider.id) }
+        return try Keychain.load(account: provider.id, service: Self.keychainService)
     }
 
     @discardableResult
@@ -246,7 +307,7 @@ final class BypassCenter {
             }
             return true
         } catch {
-            onError?(error)
+            onError?(error, key?.isEmpty == false ? "The API key was not saved" : "The API key was not removed")
             return false
         }
     }
@@ -255,7 +316,8 @@ final class BypassCenter {
 
     func enqueue(_ links: [String]) {
         var known = Set(jobs.filter { !$0.isFinished }.map(\.link))
-        for link in links where known.insert(link).inserted {
+        // A link to this Mac or the local network never goes to a third-party service.
+        for link in links where URL(string: link).map(PublicAddress.allows) == true && known.insert(link).inserted {
             jobs.append(BypassJob(link: link))
         }
         startIfNeeded()
@@ -298,13 +360,14 @@ final class BypassCenter {
     private func stop(_ job: BypassJob) {
         if !job.isFinished { job.status = .failed("Stopped") }
         job.task?.cancel()
+        job.releaseBrowser()
         if job === current { browser?.stop() }
     }
 
-    func openLinks(of job: BypassJob) {
+    func openLinks(of job: BypassJob, all: Bool = false) {
         guard !job.megaLinks.isEmpty else { return }
         job.opened = true
-        onLinks?(job.megaLinks)
+        onLinks?(job.megaLinks, all)
     }
 
     /// Links that run at the same time. A low number keeps the load on the free services low.
@@ -312,8 +375,7 @@ final class BypassCenter {
 
     private func startIfNeeded() {
         for job in jobs where job.status == .waiting && job.task == nil {
-            guard jobs.count(where: { $0.task != nil }) < Self.parallelJobs else { return }
-            if browser == nil { browser = BypassBrowser() }
+            guard jobs.count(where: { $0.task != nil && !$0.waitsForYou }) < Self.parallelJobs else { return }
             job.status = .running("Reading the link")
             job.task = Task {
                 await run(job)
@@ -326,9 +388,14 @@ final class BypassCenter {
     private func run(_ job: BypassJob) async {
         var assist: [BypassProvider] = []
         var links = await automatic(job.link, job: job, depth: 0, assist: &assist)
+        job.releaseBrowser()
         if links.isEmpty, !Task.isCancelled {
             job.steps = 0
+            // The next link in the queue can start while this one waits for you.
+            job.waitsForYou = true
+            startIfNeeded()
             links = await withYou(job, assist: assist)
+            job.releaseBrowser()
         }
         guard !Task.isCancelled else {
             // A step can set a status after the stop.
@@ -411,6 +478,9 @@ final class BypassCenter {
 
     /// Links in a chain (a locker, a paste, a locker in that paste…).
     private static let maxDepth = 5
+    /// The web services are slow: they get the link itself and the next link of the chain
+    /// (the output of a locker that is another locker), not the links after it.
+    private static let pageDepth = 1
     /// Time that each API service has alone before the next one starts too.
     private static let headStart: Duration = .seconds(5)
 
@@ -427,10 +497,14 @@ final class BypassCenter {
             link = resolved.absoluteString
         }
         if depth == 0 { job.target = link }
+        return await viaServices(link, job: job, depth: depth, assist: &assist)
+    }
+
+    /// The API services, then the web services.
+    private func viaServices(_ link: String, job: BypassJob, depth: Int, assist: inout [BypassProvider]) async -> [String] {
         let apis = providers.filter { isEnabled($0) && $0.isAPI && !$0.withYouOnly && $0.supports(link) }
         let links = await viaAPIs(apis, link: link, job: job, depth: depth, assist: &assist)
-        // The web services are slow: they get the link itself, not the lockers found after it.
-        guard links.isEmpty, depth == 0 else { return links }
+        guard links.isEmpty, depth <= Self.pageDepth, usesWebViews else { return links }
         let pages = providers.filter { isEnabled($0) && $0.kind == .page && $0.supports(link) && !$0.withYouOnly }
         // An Admaven locker gives its address only after a captcha or an offer. In the
         // background the web services stop at the captcha or go to an ad page: they wait
@@ -440,19 +514,14 @@ final class BypassCenter {
             job.attempts.append("Admaven locker: the services with a captcha wait for you")
             return []
         }
-        return await withPanel(job, waiting: "Waits for the panel") {
-            for provider in pages {
-                guard !Task.isCancelled else { return [] }
-                self.provider = provider
-                skipRequested = false
-                collectRequested = false
-                job.status = .running(provider.name)
-                let outcome = await viaPage(provider, link: link, job: job, interactive: false)
-                let links = await use(outcome, from: provider, link: link, job: job, depth: depth, assist: &assist)
-                if !links.isEmpty { return links }
-            }
-            return []
-        } ?? []
+        for provider in pages {
+            guard !Task.isCancelled else { return [] }
+            job.status = .running(provider.name)
+            let outcome = await viaPage(provider, link: link, job: job, browser: backgroundBrowser(job), interactive: false)
+            let links = await use(outcome, from: provider, link: link, job: job, depth: depth, assist: &assist)
+            if !links.isEmpty { return links }
+        }
+        return []
     }
 
     /// The API services run together, in order. The next one starts when those before it
@@ -490,7 +559,8 @@ final class BypassCenter {
                         group.cancelAll()
                         return links
                     }
-                    if running.isEmpty { startNext() }
+                    // A failure gives the rest of its head start to the next service.
+                    if running.isEmpty || index == started - 1 { startNext() }
                 }
             }
             group.cancelAll()
@@ -539,8 +609,11 @@ final class BypassCenter {
     /// Reads a result: MEGA links in the address, another protector, or a page with links.
     private func follow(_ url: URL, job: BypassJob, depth: Int, scripts: Bool = true,
                         assist: inout [BypassProvider]) async -> [String] {
-        let direct = LinkParser.links(in: url.absoluteString).map(\.0)
-        if !direct.isEmpty { return direct }
+        let direct = MegaLinkFinder.links(in: url.absoluteString)
+        if !direct.isEmpty {
+            job.attempts.append("MEGA link in the address")
+            return direct
+        }
         guard depth <= Self.maxDepth, !Task.isCancelled else { return [] }
         if isProtector(url) {
             job.attempts.append("Next protector: \(url.host() ?? url.absoluteString)")
@@ -555,14 +628,27 @@ final class BypassCenter {
         }
         // Pages that build their links with scripts.
         var links: [String] = []
-        if scripts, !local.gone {
-            links = await withPanel(job, waiting: "Waits for the panel") {
+        if scripts, !local.gone, usesWebViews {
+            let page = local.resolved ?? url
+            if job.waitsForYou, current === job, let panel = browser {
+                // Step 2: the page shows in the panel, where you can do its steps.
+                job.status = .needsYou("Do the steps of the result page in the panel, then press Collect Now")
+                links = await collect(at: page, browser: panel, waitFor: 180, interactive: true)
+            } else {
                 job.status = .running("Reading the result")
-                return await collect(at: local.resolved ?? url, job: job, waitFor: 25, interactive: false)
-            } ?? []
+                links = await collect(at: page, browser: backgroundBrowser(job), waitFor: 25, interactive: false)
+                if links.isEmpty, !job.resultPages.contains(page) { job.resultPages.append(page) }
+            }
         }
-        if links.isEmpty { job.attempts.append("No MEGA links in the result page") }
-        return links
+        guard links.isEmpty else { return links }
+        job.attempts.append("No MEGA links in the result page")
+        // A result with no MEGA links is often the next locker, on a domain that is not in
+        // the list of protectors: it goes through the services like the first link.
+        let next = local.resolved ?? url
+        guard !local.gone, depth < Self.maxDepth, !Task.isCancelled,
+              let host = next.host()?.lowercased(), !Self.isIgnored(host), !LinkSorter.isMega(host) else { return [] }
+        job.attempts.append("The result can be another locker: \(host) goes through the services too")
+        return await viaServices(next.absoluteString, job: job, depth: depth, assist: &assist)
     }
 
     private func isProtector(_ url: URL) -> Bool {
@@ -595,7 +681,13 @@ final class BypassCenter {
             page = await fetchPage(url)
         }
         guard let (final, status, html) = page else { return LocalRead() }
-        var read = LocalRead(links: LinkParser.links(in: html).map(\.0),
+        // A short link that redirects to MEGA: the redirect stops at the MEGA link.
+        let redirected = MegaLinkFinder.links(in: final.absoluteString)
+        if !redirected.isEmpty {
+            job.attempts.append("\(url.host() ?? "The link"): redirects to MEGA")
+            return LocalRead(links: redirected)
+        }
+        var read = LocalRead(links: MegaLinkFinder.links(in: html),
                              resolved: final.absoluteString == url.absoluteString ? nil : final,
                              gone: status == 404 || status == 410)
         if read.gone { job.attempts.append("\(final.host() ?? "The page"): HTTP \(status), the page is not there") }
@@ -675,8 +767,9 @@ final class BypassCenter {
         }
         do {
             let finished = request
+            let redirects = RedirectGuard(keyHeader: api.keyHeader)
             let reply = try await withTimeout(seconds: provider.timeout) { [session] in
-                try await Self.readReply(session: session, request: finished)
+                try await Self.readReply(session: session, request: finished, delegate: redirects)
             }
             return Self.outcome(from: reply)
         } catch is TimeoutError {
@@ -687,8 +780,9 @@ final class BypassCenter {
     }
 
     /// Reads a JSON reply or an event stream ("data: {...}" lines).
-    private nonisolated static func readReply(session: URLSession, request: URLRequest) async throws -> APIReply {
-        let (bytes, response) = try await session.bytes(for: request)
+    private nonisolated static func readReply(session: URLSession, request: URLRequest,
+                                              delegate: RedirectGuard) async throws -> APIReply {
+        let (bytes, response) = try await session.bytes(for: request, delegate: delegate)
         defer { bytes.task.cancel() }
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         let type = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Type") ?? ""
@@ -749,7 +843,7 @@ final class BypassCenter {
             return .failed(reply.message ?? "HTTP \(reply.status)")
         }
         guard let result = reply.result else { return .failed(reply.message ?? "No result") }
-        let mega = LinkParser.links(in: result).map(\.0)
+        let mega = MegaLinkFinder.links(in: result)
         if !mega.isEmpty { return .mega(mega) }
         let trimmed = result.trimmingCharacters(in: .whitespacesAndNewlines)
         if let url = URL(string: trimmed), ["http", "https"].contains(url.scheme?.lowercased() ?? "") { return .result(url) }
@@ -763,15 +857,24 @@ final class BypassCenter {
     /// Loads a page and its HTTP redirects; returns the last address, the HTTP status and
     /// the text (empty for an error page). Files are not loaded; only the first 4 MB of a page are read.
     private func fetchPage(_ url: URL) async -> (URL, Int, String)? {
-        await Self.readPage(url, session: session)
+        // The request timeout counts only the time between two bytes: a page that sends
+        // slowly has a total limit too.
+        (try? await withTimeout(seconds: 25) { [session] in await Self.readPage(url, session: session) }) ?? nil
     }
 
     /// Off the main thread: a page can be large.
     @concurrent private nonisolated static func readPage(_ url: URL, session: URLSession) async -> (URL, Int, String)? {
+        guard PublicAddress.allows(url) else { return nil }
         var request = URLRequest(url: url, timeoutInterval: 20)
         request.setValue("text/html,application/xhtml+xml,*/*", forHTTPHeaderField: "Accept")
-        guard let (bytes, response) = try? await session.bytes(for: request),
+        let redirects = RedirectGuard()
+        guard let (bytes, response) = try? await session.bytes(for: request, delegate: redirects),
               let http = response as? HTTPURLResponse else { return nil }
+        // The MEGA page itself is not needed: its address is the result.
+        if let mega = redirects.megaLink {
+            bytes.task.cancel()
+            return (mega, 200, "")
+        }
         let type = http.value(forHTTPHeaderField: "Content-Type")?.lowercased() ?? "text/html"
         if http.statusCode >= 400 {
             bytes.task.cancel()
@@ -796,10 +899,11 @@ final class BypassCenter {
         return (http.url ?? url, http.statusCode, text)
     }
 
-    private func viaPage(_ provider: BypassProvider, link: String, job: BypassJob, interactive: Bool) async -> Outcome {
-        guard let browser else { return .failed("No browser") }
+    private func viaPage(_ provider: BypassProvider, link: String, job: BypassJob, browser: BypassBrowser,
+                         interactive: Bool) async -> Outcome {
         let encoded = link.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? link
-        let izenKey = BypassProvider.all.first { $0.id == "izen-api" }.flatMap { key(for: $0) } ?? ""
+        // The izen.lol page takes the key in its address: only when the izen.lol API is on.
+        let izenKey = BypassProvider.all.first { $0.id == "izen-api" }.flatMap { isEnabled($0) ? key(for: $0) : nil } ?? ""
         guard let start = URL(string: provider.start.replacingOccurrences(of: "{url}", with: encoded)
             .replacingOccurrences(of: "{izenKey}", with: izenKey.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? "")) else {
             return .failed("Bad address")
@@ -821,7 +925,7 @@ final class BypassCenter {
         var lastCandidate: String?
         while Date() < deadline {
             guard !Task.isCancelled else { return .failed("Stopped") }
-            if skipRequested { return .failed("Skipped") }
+            if interactive, skipRequested { return .failed("Skipped") }
             try? await Task.sleep(for: .milliseconds(700))
 
             if let input = provider.input, clicks < 3, Date().timeIntervalSince(lastClick) > 12 {
@@ -832,7 +936,7 @@ final class BypassCenter {
                 }
             }
             guard let page = await browser.scan(resultSelector: provider.result) else { continue }
-            if !page.mega.isEmpty || collectRequested {
+            if !page.mega.isEmpty || (interactive && collectRequested) {
                 try? await Task.sleep(for: .milliseconds(900))
                 let final = await browser.scan(resultSelector: provider.result)
                 return .mega(final?.mega ?? page.mega)
@@ -880,17 +984,16 @@ final class BypassCenter {
     }
 
     /// Opens a page in the panel and collects its MEGA links.
-    private func collect(at url: URL, job: BypassJob, waitFor seconds: Double, interactive: Bool) async -> [String] {
-        guard let browser else { return [] }
+    private func collect(at url: URL, browser: BypassBrowser, waitFor seconds: Double, interactive: Bool) async -> [String] {
         browser.load(url)
         await browser.waitUntilLoaded(timeout: 25)
         var deadline = Date().addingTimeInterval(seconds)
         var lastCount = -1
         while Date() < deadline {
-            guard !Task.isCancelled, !skipRequested else { return [] }
+            guard !Task.isCancelled, !(interactive && skipRequested) else { return [] }
             try? await Task.sleep(for: .milliseconds(800))
             guard let page = await browser.scan(resultSelector: nil) else { continue }
-            if collectRequested { return page.mega }
+            if interactive, collectRequested { return page.mega }
             if !page.mega.isEmpty {
                 if page.mega.count == lastCount { return page.mega }
                 lastCount = page.mega.count
@@ -910,10 +1013,24 @@ final class BypassCenter {
         let direct = providers.first { if case .direct = $0.kind { return isEnabled($0) } else { return false } }
         let first = providers.filter { $0.withYouOnly && isEnabled($0) && $0.supports(link) }
         let steps = first + assist.filter { !first.contains($0) } + (direct.map { [$0] } ?? [])
-        guard !steps.isEmpty else { return [] }
+        let resultPages = Array(job.resultPages.prefix(2))
+        guard usesWebViews, !steps.isEmpty || !resultPages.isEmpty else { return [] }
+        if browser == nil { browser = makeBrowser() }
         return await withPanel(job, waiting: "Waits for you: another link is in the panel") {
+            guard let browser = self.browser else { return [] }
             waitingForYou = true
             onNeedsYou?(URL(string: job.link)?.host() ?? job.link)
+            // A service already passed the locker: its result page comes first.
+            for page in resultPages {
+                guard !Task.isCancelled else { return [] }
+                self.provider = nil
+                skipRequested = false
+                collectRequested = false
+                job.status = .needsYou("Do the steps of the result page in the panel, then press Collect Now")
+                let links = await collect(at: page, browser: browser, waitFor: 180, interactive: true)
+                job.attempts.append("Result page with you (\(page.host() ?? "page")): \(links.count) MEGA link(s)")
+                if !links.isEmpty { return links }
+            }
             for provider in steps {
                 guard !Task.isCancelled else { return [] }
                 self.provider = provider
@@ -923,12 +1040,12 @@ final class BypassCenter {
                 case .direct:
                     guard let url = URL(string: link) else { continue }
                     job.status = .needsYou("Do the steps of the page in the panel, then press Collect Now")
-                    let links = await collect(at: url, job: job, waitFor: 300, interactive: true)
+                    let links = await collect(at: url, browser: browser, waitFor: 300, interactive: true)
                     job.attempts.append("The page itself: \(links.count) MEGA link(s)")
                     if !links.isEmpty { return links }
                 default:
                     job.status = .needsYou("Solve the check of \(provider.name) in the panel")
-                    switch await viaPage(provider, link: link, job: job, interactive: true) {
+                    switch await viaPage(provider, link: link, job: job, browser: browser, interactive: true) {
                     case let .mega(links):
                         return links
                     case let .result(url):
@@ -952,6 +1069,106 @@ final class BypassCenter {
 }
 
 private struct TimeoutError: Error {}
+
+/// The redirects of Bypass requests: never to this Mac or the local network, and an API
+/// key stays on the host of the API (a redirect to another host, or to plain HTTP, goes
+/// on without the key).
+nonisolated final class RedirectGuard: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    let keyHeader: String?
+    private let lock = NSLock()
+    private var stoppedAt: URL?
+
+    init(keyHeader: String? = nil) { self.keyHeader = keyHeader }
+
+    /// A redirect to a MEGA link stops there: this is the link.
+    var megaLink: URL? { lock.withLock { stoppedAt } }
+
+    // The async form of this method crashes the Swift 6.4 compiler.
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest, completionHandler: @escaping @Sendable (URLRequest?) -> Void) {
+        completionHandler(redirect(request, from: task.originalRequest?.url))
+    }
+
+    func redirect(_ request: URLRequest, from original: URL?) -> URLRequest? {
+        guard let next = request.url, PublicAddress.allows(next) else { return nil }
+        if !MegaLinkFinder.links(in: next.absoluteString).isEmpty {
+            lock.withLock { stoppedAt = next }
+            return nil
+        }
+        guard let keyHeader, next.host() != original?.host() || next.scheme?.lowercased() != "https" else { return request }
+        var request = request
+        request.setValue(nil, forHTTPHeaderField: keyHeader)
+        return request
+    }
+}
+
+/// MEGA links in text, also when a page or an address hides them: percent-encoded
+/// (?url=https%3A%2F%2Fmega.nz…) or in Base64 (safelink pages).
+nonisolated enum MegaLinkFinder {
+    /// Base64 that starts with "http".
+    private static let base64Pattern = try! NSRegularExpression(pattern: #"aHR0c[A-Za-z0-9+/_-]{16,}={0,2}"#)
+
+    static func links(in text: String) -> [String] {
+        var found = LinkParser.links(in: text).map(\.0)
+        func add(_ more: [String]) { for link in more where !found.contains(link) { found.append(link) } }
+        if text.contains("%"), let decoded = text.removingPercentEncoding, decoded != text {
+            add(LinkParser.links(in: decoded).map(\.0))
+        }
+        let range = NSRange(text.startIndex..., in: text)
+        for match in base64Pattern.matches(in: text, range: range).prefix(500) {
+            guard let span = Range(match.range, in: text), let decoded = decodeBase64(String(text[span])) else { continue }
+            add(LinkParser.links(in: decoded).map(\.0))
+            if decoded.contains("%"), let plain = decoded.removingPercentEncoding { add(LinkParser.links(in: plain).map(\.0)) }
+        }
+        return found
+    }
+
+    static func decodeBase64(_ value: String) -> String? {
+        var base64 = value.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+            .trimmingCharacters(in: CharacterSet(charactersIn: "="))
+        base64 += String(repeating: "=", count: (4 - base64.count % 4) % 4)
+        guard let data = Data(base64Encoded: base64) else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+}
+
+/// Bypass reads only public web addresses: never this Mac or the local network, whatever
+/// a service or a page sends back.
+nonisolated enum PublicAddress {
+    static func allows(_ url: URL) -> Bool {
+        guard ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
+              var host = url.host(percentEncoded: false)?.lowercased(), !host.isEmpty else { return false }
+        if host.hasPrefix("["), host.hasSuffix("]") { host = String(host.dropFirst().dropLast()) }
+        while host.hasSuffix(".") { host.removeLast() }
+        // "localhost", names of the local network, and numbers like 2130706433.
+        if !host.contains(".") && !host.contains(":") { return false }
+        let localSuffixes = [".local", ".localhost", ".internal", ".lan", ".home.arpa", ".localdomain"]
+        if host == "localhost" || localSuffixes.contains(where: host.hasSuffix) { return false }
+        // inet_aton reads the short forms that the resolver also reads (127.1, 0x7f.1).
+        var v4 = in_addr()
+        if inet_aton(host, &v4) == 1 { return isPublic(v4: UInt32(bigEndian: v4.s_addr)) }
+        var v6 = in6_addr()
+        if inet_pton(AF_INET6, host, &v6) == 1 {
+            let bytes = withUnsafeBytes(of: v6) { Array($0) }
+            if bytes[0..<10].allSatisfy({ $0 == 0 }), bytes[10] == 0xff, bytes[11] == 0xff {
+                return isPublic(v4: bytes[12...].reduce(0) { $0 << 8 | UInt32($1) })
+            }
+            let unspecifiedOrLoopback = bytes[0..<15].allSatisfy { $0 == 0 } && bytes[15] <= 1
+            let uniqueLocal = bytes[0] & 0xfe == 0xfc
+            let linkLocal = bytes[0] == 0xfe && bytes[1] & 0xc0 == 0x80
+            let multicast = bytes[0] == 0xff
+            return !(unspecifiedOrLoopback || uniqueLocal || linkLocal || multicast)
+        }
+        return true
+    }
+
+    private static func isPublic(v4 address: UInt32) -> Bool {
+        let a = address >> 24, b = (address >> 16) & 0xff
+        return !(a == 0 || a == 10 || a == 127 || a >= 224
+                 || (a == 169 && b == 254) || (a == 172 && (16...31).contains(b))
+                 || (a == 192 && b == 168) || (a == 100 && (64...127).contains(b)))
+    }
+}
 
 /// Runs work with a time limit.
 private func withTimeout<T: Sendable>(seconds: Double, _ work: @escaping @Sendable () async throws -> T) async throws -> T {
@@ -991,6 +1208,9 @@ final class BypassBrowser: NSObject, WKNavigationDelegate, WKUIDelegate {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .nonPersistent()
         configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
+        // Step 1 runs hidden, and the panel is often not on screen: without this, WebKit
+        // slows the page down (timers, checks like Turnstile) and the services look stuck.
+        configuration.preferences.inactiveSchedulingPolicy = .none
         webView = WKWebView(frame: .zero, configuration: configuration)
         webView.customUserAgent = Self.userAgent
         super.init()
@@ -1020,24 +1240,55 @@ final class BypassBrowser: NSObject, WKNavigationDelegate, WKUIDelegate {
         }
     }
 
+    /// Nil removes the rules. They act from the next page that loads.
+    func blockAds(_ rules: WKContentRuleList?) {
+        let controller = webView.configuration.userContentController
+        controller.removeAllContentRuleLists()
+        if let rules { controller.add(rules) }
+    }
+
     func scan(resultSelector: String?) async -> PageScan? {
-        let json = try? await webView.callAsyncJavaScript(Self.scanScript, arguments: ["resultSelector": resultSelector ?? ""],
-                                                          in: nil, contentWorld: .page) as? String
+        let json = await evaluate(Self.scanScript, arguments: ["resultSelector": resultSelector ?? ""])
         guard let data = json?.data(using: .utf8) else { return nil }
         return try? JSONDecoder().decode(PageScan.self, from: data)
     }
 
     func fill(link: String, input: String, submit: String?) async -> String {
-        let state = try? await webView.callAsyncJavaScript(Self.fillScript,
-                                                           arguments: ["link": link, "inputSelector": input, "submitSelector": submit ?? ""],
-                                                           in: nil, contentWorld: .page) as? String
-        return state ?? "error"
+        await evaluate(Self.fillScript, arguments: ["link": link, "inputSelector": input, "submitSelector": submit ?? ""]) ?? "error"
+    }
+
+    private static let scriptTimeout: Duration = .seconds(6)
+
+    /// A page can block its scripts (anti-bot loops). A script with no answer in time
+    /// counts as no answer, and Stop ends the wait at once.
+    private func evaluate(_ script: String, arguments: [String: String]) async -> String? {
+        let gate = AsyncResultGate<String?>()
+        let webView = webView
+        Task {
+            let value = try? await webView.callAsyncJavaScript(script, arguments: arguments, in: nil, contentWorld: .page) as? String
+            gate.finish(.success(value))
+        }
+        let timer = Task {
+            try? await Task.sleep(for: Self.scriptTimeout)
+            gate.finish(.success(nil))
+        }
+        defer { timer.cancel() }
+        return (try? await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { gate.install($0) }
+        } onCancel: {
+            gate.cancel()
+        }) ?? nil
     }
 
     // MARK: Policies
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction) async -> WKNavigationActionPolicy {
         if navigationAction.shouldPerformDownload { return .cancel }
+        // Never this Mac or the local network.
+        if let url = navigationAction.request.url, ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
+           !PublicAddress.allows(url) {
+            return .cancel
+        }
         // Keep a destination handed back in the address; the locker page itself is not needed.
         if navigationAction.targetFrame?.isMainFrame != false, let url = navigationAction.request.url,
            let value = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?
@@ -1077,7 +1328,15 @@ final class BypassBrowser: NSObject, WKNavigationDelegate, WKUIDelegate {
     const text = document.body ? document.body.innerText : '';
     for (const m of (text.match(/https?:\/\/[^\s"'<>]+/g) || [])) urls.add(m);
     const all = [...urls, ...inputs].join('\n') + '\n' + text;
-    const mega = [...new Set(all.match(megaRe) || [])];
+    // Also links in attributes and scripts, percent-encoded, or in Base64 (safelink pages).
+    const source = document.documentElement ? document.documentElement.innerHTML.replace(/\\\//g, '/').replace(/&amp;/g, '&') : '';
+    const found = new Set((all + '\n' + source).match(megaRe) || []);
+    const decoded = (() => { try { return decodeURIComponent((all + '\n' + source).replace(/\+/g, ' ')); } catch (e) { return ''; } })();
+    for (const m of (decoded.match(megaRe) || [])) found.add(m);
+    for (const b of ((all + '\n' + source).match(/aHR0c[A-Za-z0-9+\/_-]{16,}={0,2}/g) || []).slice(0, 500)) {
+      try { for (const m of (atob(b.replace(/-/g, '+').replace(/_/g, '/')).match(megaRe) || [])) found.add(m); } catch (e) {}
+    }
+    const mega = [...found];
     let result = null;
     if (resultSelector) {
       const el = document.querySelector(resultSelector);

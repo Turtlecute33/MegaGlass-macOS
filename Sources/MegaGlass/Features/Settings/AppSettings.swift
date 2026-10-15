@@ -22,9 +22,12 @@ final class AppSettings {
         static let gridSize = "gridSize"
         static let clipboardWatch = "clipboardWatch"
         static let forwardBrowser = "forwardBrowser"
+        static let previousBrowser = "previousBrowser"
         static let bypassAutoOpen = "bypassAutoOpen"
         static let bypassOrder = "bypassOrder"
         static let bypassDisabled = "bypassDisabled"
+        static let bypassBlockAds = "bypassBlockAds"
+        static let bypassKeepLargest = "bypassKeepLargest"
         static let protectorHosts = "protectorHosts"
     }
 
@@ -74,6 +77,10 @@ final class AppSettings {
     var forwardBrowser: String {
         didSet { defaults.set(forwardBrowser, forKey: Key.forwardBrowser) }
     }
+    /// The default browser before MegaGlass took its place (app path).
+    var previousBrowser: String {
+        didSet { defaults.set(previousBrowser, forKey: Key.previousBrowser) }
+    }
     var bypassAutoOpen: Bool {
         didSet { defaults.set(bypassAutoOpen, forKey: Key.bypassAutoOpen) }
     }
@@ -82,6 +89,14 @@ final class AppSettings {
     }
     var bypassDisabled: [String] {
         didSet { defaults.set(bypassDisabled, forKey: Key.bypassDisabled) }
+    }
+    /// Blocks ad and pop-up networks in the Bypass web views.
+    var bypassBlockAds: Bool {
+        didSet { defaults.set(bypassBlockAds, forKey: Key.bypassBlockAds) }
+    }
+    /// A Bypass result with more MEGA links opens only this number of the largest; 0 opens all.
+    var bypassKeepLargest: Int {
+        didSet { defaults.set(bypassKeepLargest, forKey: Key.bypassKeepLargest) }
     }
     var protectorHosts: [String] {
         didSet { defaults.set(protectorHosts, forKey: Key.protectorHosts) }
@@ -110,8 +125,11 @@ final class AppSettings {
         gridSize = savedGridSize.isFinite ? min(220, max(96, savedGridSize)) : 132
         clipboardWatch = defaults.bool(forKey: Key.clipboardWatch)
         forwardBrowser = defaults.string(forKey: Key.forwardBrowser) ?? ""
+        previousBrowser = defaults.string(forKey: Key.previousBrowser) ?? ""
         bypassAutoOpen = defaults.object(forKey: Key.bypassAutoOpen) as? Bool ?? true
         bypassDisabled = defaults.stringArray(forKey: Key.bypassDisabled) ?? []
+        bypassBlockAds = defaults.object(forKey: Key.bypassBlockAds) as? Bool ?? true
+        bypassKeepLargest = min(5, max(0, defaults.object(forKey: Key.bypassKeepLargest) as? Int ?? 2))
         var hosts = defaults.stringArray(forKey: Key.protectorHosts) ?? LinkSorter.defaultProtectorHosts
         // Version 2 added the Admaven domains, version 3 more mirror domains; add them once
         // to an older saved list.

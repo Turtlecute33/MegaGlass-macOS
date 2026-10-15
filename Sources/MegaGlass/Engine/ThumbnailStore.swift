@@ -30,9 +30,16 @@ nonisolated final class ThumbnailStore: @unchecked Sendable {
             }
         }
     }
-    private struct Entry {
+    /// One shared download. `waiters` changes only under `lock`.
+    private final class Entry: @unchecked Sendable {
         let id = UUID()
         let task: Task<CGImage?, Never>
+        var waiters = 1
+        init(task: Task<CGImage?, Never>) { self.task = task }
+    }
+    /// One caller of `load`; it leaves its entry once (finish or cancel). Changes under `lock`.
+    private final class Waiter: @unchecked Sendable {
+        var left = false
     }
     private let directory: URL
     private let fetchAttribute: (@Sendable (UInt64, MEGANode?, Bool, URL) async throws -> Void)?
@@ -95,19 +102,40 @@ nonisolated final class ThumbnailStore: @unchecked Sendable {
         let (cacheKey, entry) = lock.withLock { () -> (String, Entry) in
             let current = generation
             let cacheKey = current.id.uuidString + key
-            if let running = inflight[cacheKey] { return (cacheKey, running) }
+            if let running = inflight[cacheKey] {
+                running.waiters += 1
+                return (cacheKey, running)
+            }
             let entry = Entry(task: Task.detached(priority: .utility) { [self, current] in
                 await fetch(handle, key: key, node: node, preview: preview, generation: current)
             })
             inflight[cacheKey] = entry
             return (cacheKey, entry)
         }
-        let image = await entry.task.value
-        let current = lock.withLock {
-            if inflight[cacheKey]?.id == entry.id { inflight[cacheKey] = nil }
-            return cacheKey.hasPrefix(generation.id.uuidString)
+        let waiter = Waiter()
+        // A cell that scrolls away, or an inspector that changes item, stops waiting. When
+        // nobody waits, the download stops too, and visible images do not queue behind it.
+        let image = await withTaskCancellationHandler {
+            await entry.task.value
+        } onCancel: {
+            self.leave(entry, waiter, cacheKey: cacheKey, cancelled: true)
         }
+        leave(entry, waiter, cacheKey: cacheKey, cancelled: false)
+        let current = lock.withLock { cacheKey.hasPrefix(generation.id.uuidString) }
         return Task.isCancelled || !current ? nil : image
+    }
+
+    private func leave(_ entry: Entry, _ waiter: Waiter, cacheKey: String, cancelled: Bool) {
+        let stop = lock.withLock { () -> Bool in
+            guard !waiter.left else { return false }
+            waiter.left = true
+            entry.waiters -= 1
+            // A finished download leaves the table at once; a cancelled one when it has no waiter.
+            guard !cancelled || entry.waiters == 0 else { return false }
+            if inflight[cacheKey]?.id == entry.id { inflight[cacheKey] = nil }
+            return cancelled
+        }
+        if stop { entry.task.cancel() }
     }
 
     private func fetch(_ handle: UInt64, key: String, node: MEGANode?, preview: Bool, generation: Generation) async -> CGImage? {
@@ -127,12 +155,16 @@ nonisolated final class ThumbnailStore: @unchecked Sendable {
                 try await fetchAttribute(handle, node, preview, staging)
             } else {
                 guard let node = node ?? sdk.node(forHandle: handle) else { return nil }
-                _ = try await sdk.request { delegate in
-                    if preview {
-                        sdk.getPreviewNode(node, destinationFilePath: staging.path, delegate: delegate)
-                    } else {
-                        sdk.getThumbnailNode(node, destinationFilePath: staging.path, delegate: delegate)
+                _ = try await withTaskCancellationHandler {
+                    try await sdk.request { delegate in
+                        if preview {
+                            sdk.getPreviewNode(node, destinationFilePath: staging.path, delegate: delegate)
+                        } else {
+                            sdk.getThumbnailNode(node, destinationFilePath: staging.path, delegate: delegate)
+                        }
                     }
+                } onCancel: {
+                    if preview { sdk.cancelGetPreviewNode(node) } else { sdk.cancelGetThumbnailNode(node) }
                 }
             }
             // Publish a disk-cache entry only after SDK success. A crash or a failed

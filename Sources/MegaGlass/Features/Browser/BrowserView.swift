@@ -265,13 +265,20 @@ struct BrowserView: View {
     }
 
     private func downloadAll() {
-        guard let root = model.engine.sdk.rootNode else { return }
-        app.download([root.handle], from: model.engine)
+        let engine = model.engine
+        let sdk = engine.sdk
+        Task {
+            guard let root = await EngineQueue.run({ sdk.rootNode?.handle }) else { return }
+            app.download([root], from: engine)
+        }
     }
 
     private func importAll() {
-        guard let root = model.engine.sdk.rootNode else { return }
-        sheet = .importItems([root.handle])
+        let sdk = model.engine.sdk
+        Task {
+            guard let root = await EngineQueue.run({ sdk.rootNode?.handle }) else { return }
+            sheet = .importItems([root])
+        }
     }
 
     @ViewBuilder

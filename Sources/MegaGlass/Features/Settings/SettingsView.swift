@@ -114,7 +114,9 @@ private struct PrivacySettings: View {
     var body: some View {
         Form {
             Text("Files are encrypted on this Mac before upload and decrypted after download. MEGA cannot read them.")
-            Text("MegaGlass sends no telemetry. Cloud storage uses the MEGA SDK. Bypass sends submitted protector links to the enabled third-party services and pages; their privacy policies apply.")
+            Text("MegaGlass sends no telemetry. Cloud storage uses the MEGA SDK.")
+            Text("Bypass: the app opens each protector link and its result pages itself, from your internet address. It sends the link to the enabled third-party services and loads their pages; their privacy policies apply. Links from the clipboard watch and from the browser router go to Bypass with no other step. The izen.lol page gets your izen.lol key in its address. Bypass never opens addresses on this Mac or on your local network.")
+            Text("Copied MEGA links stay on this Mac: they do not go to other devices (Universal Clipboard) or to clipboard history apps.")
             LabeledContent("Hardware AES", value: MGDiagnostics.hasHardwareAES ? "Active" : "Not available")
             LabeledContent("Cached thumbnails and previews") {
                 Button("Clear Cache") {

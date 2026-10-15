@@ -120,7 +120,7 @@ struct InspectorView: View {
         path = details.0
         versionCount = details.1
         if item.isFolder {
-            guard let node = engine.node(handle),
+            guard let node = await sdk.loadNode(handle),
                   let info = try? await sdk.request({ sdk.getFolderInfo(for: node, delegate: $0) }).megaFolderInfo else { return }
             guard !Task.isCancelled else { return }
             folderInfo = (info.files, info.folders, info.currentSize, info.versions)

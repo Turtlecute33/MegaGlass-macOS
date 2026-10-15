@@ -8,7 +8,17 @@ nonisolated enum LocalFileSafety {
             .replacingOccurrences(of: ":", with: "_")
             .replacingOccurrences(of: "\0", with: "_")
         if cleaned.isEmpty || cleaned == "." || cleaned == ".." { return "Preview" }
-        return cleaned
+        return shortened(cleaned)
+    }
+
+    /// macOS names have at most 255 UTF-8 bytes: a longer name keeps its extension.
+    private static func shortened(_ name: String, limit: Int = 255) -> String {
+        guard name.utf8.count > limit else { return name }
+        let ext = (name as NSString).pathExtension
+        let suffix = ext.isEmpty || ext.utf8.count > 16 ? "" : "." + ext
+        var stem = suffix.isEmpty ? name : String(name.dropLast(suffix.count))
+        while stem.utf8.count + suffix.utf8.count > limit { stem.removeLast() }
+        return stem.isEmpty ? "Preview" + suffix : stem + suffix
     }
 
     static func validateDownloadDirectory(_ url: URL) throws {

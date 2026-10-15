@@ -45,6 +45,8 @@ struct RootView: View {
 
 struct LoadingAccountView: View {
     let progress: Double?
+    @Environment(AppModel.self) private var app
+    @State private var cancelling = false
 
     var body: some View {
         ZStack {
@@ -65,6 +67,16 @@ struct LoadingAccountView: View {
                     ProgressView()
                         .controlSize(.small)
                 }
+                // A way out when the network does not answer.
+                Button("Cancel") {
+                    cancelling = true
+                    Task {
+                        await app.session.cancelLoading()
+                        cancelling = false
+                    }
+                }
+                .buttonStyle(.glass)
+                .disabled(cancelling)
             }
             .padding(40)
             .glassPanel(cornerRadius: 28)

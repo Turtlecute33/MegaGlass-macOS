@@ -12,26 +12,11 @@ struct LinkSettings: View {
             Section {
                 Toggle("Open copied MEGA and protector links", isOn: $settings.clipboardWatch)
                     .onChange(of: settings.clipboardWatch) { _, enabled in app.clipboard.setEnabled(enabled) }
-                Text("Copy a link in any app (for example right-click > Copy Link in the browser). The check is on this Mac; other text is ignored. macOS asks once for permission to paste from other apps.")
+                Text("Copy a link in any app (for example right-click > Copy Link in the browser). The check is on this Mac; other text, and items that password managers mark as secret, are ignored. Protector links go to Bypass, which sends them to the enabled services. macOS asks once for permission to paste from other apps.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } header: {
                 Text("Clipboard")
-            }
-
-            Section {
-                HStack {
-                    Text("Send to MegaGlass bookmark")
-                    Spacer()
-                    Button("Install…") {
-                        BrowserRouter.forward([Bookmarklet.installPage()], saved: settings.forwardBrowser)
-                    }
-                }
-                Text("One click on any page sends its MEGA links to MegaGlass, and its protector links to Bypass. Works in every browser, with no extension.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } header: {
-                Text("Browser bookmark")
             }
 
             Section {
@@ -48,7 +33,7 @@ struct LinkSettings: View {
                         NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.Desktop-Settings.extension")!)
                     }
                 }
-                Text("Like magnet links for a torrent app: set MegaGlass as the default web browser in Desktop & Dock. Then MEGA links that you click in other apps (Telegram, Mail, Discord) open here, and every other link goes on to the browser above at once. Links that you click inside the browser stay in the browser; use the bookmark or the clipboard for them.")
+                Text("Like magnet links for a torrent app: set MegaGlass as the default web browser in Desktop & Dock. Then MEGA links that you click in other apps (Telegram, Mail, Discord) open here, and every other link goes on to the browser above at once. Links that you click inside the browser stay in the browser; use the clipboard for them.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } header: {
@@ -57,6 +42,7 @@ struct LinkSettings: View {
         }
         .formStyle(.grouped)
         .onAppear {
+            BrowserRouter.rememberDefault(in: app.settings)
             isDefault = BrowserRouter.isDefaultBrowser
             browsers = BrowserRouter.browsers()
         }
@@ -94,7 +80,7 @@ struct BypassSettings: View {
             } header: {
                 Text("Services, in order")
             } footer: {
-                Text("First the app reads the link itself: short links, mirror domains and pastes need no service. Then the API services run in order; each one starts when those before it fail or give no answer in 5 seconds. Then the web pages, one at a time; for Admaven lockers they wait for you at once. Up to 4 links run at the same time and take turns in the panel. The web pages run in a private panel with no stored cookies, no pop-ups and no downloads.")
+                Text("First the app reads the link itself: short links, mirror domains and pastes need no service. Then the API services run in order; each one starts when those before it fail or give no answer in 5 seconds. Then the web pages, one at a time, in a hidden private web view for each link. Pages with hCaptcha, and all pages for Admaven lockers, wait for you at the end. Up to 4 links run at the same time; a link that waits for you does not count, and only those links take turns in the panel. The web views have no stored cookies, no pop-ups and no downloads.")
             }
 
             Section {
@@ -109,7 +95,25 @@ struct BypassSettings: View {
             }
 
             Section {
+                Toggle("Block ads and pop-up networks", isOn: $settings.bypassBlockAds)
+                    .onChange(of: settings.bypassBlockAds) { center.applyAdBlocking() }
+                Text("In the web pages of Bypass. Pages load faster, and an ad cannot pass for a result. Some lockers do not work with an ad blocker: then turn this off, also from the shield button of the panel.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } header: {
+                Text("Web pages")
+            }
+
+            Section {
                 Toggle("Open found MEGA links automatically", isOn: $settings.bypassAutoOpen)
+                Picker("When a link gives more MEGA links, open", selection: $settings.bypassKeepLargest) {
+                    Text("All").tag(0)
+                    Text("The largest").tag(1)
+                    ForEach(2...5, id: \.self) { Text("The \($0) largest").tag($0) }
+                }
+                Text("Largest: the file, or the folder with all its subfolders. The app asks MEGA for the size of each link before it opens them. To open all the links of a result, right-click it > Open All MEGA Links.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 TextEditor(text: $hosts)
                     .font(.callout.monospaced())
                     .frame(height: 110)
@@ -119,7 +123,7 @@ struct BypassSettings: View {
                             .filter { !$0.isEmpty }
                     }
                 HStack {
-                    Text("Link-protector domains, one for each line. Copied, dropped or bookmarked links from these domains go to Bypass.")
+                    Text("Link-protector domains, one for each line. Copied or dropped links from these domains go to Bypass.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     Spacer()
@@ -141,23 +145,41 @@ private struct KeyField: View {
     @Environment(AppModel.self) private var app
     @State private var key = ""
     @State private var saved = false
+    @State private var readError: String?
 
     var body: some View {
-        HStack {
-            SecureField(provider.name, text: $key)
-                .onSubmit(save)
-            Button(saved ? "Saved" : "Save", action: save)
-                .disabled(key.isEmpty)
-            Button("Remove") {
-                key = ""
-                app.bypass.setKey(nil, for: provider)
-                saved = false
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                SecureField(provider.name, text: $key)
+                    .onSubmit(save)
+                Button(saved ? "Saved" : "Save", action: save)
+                    .disabled(key.isEmpty)
+                Button("Remove") {
+                    // The field clears only when the key is really gone.
+                    guard app.bypass.setKey(nil, for: provider) else { return }
+                    key = ""
+                    saved = false
+                    readError = nil
+                }
+            }
+            if let readError {
+                Text("The Keychain did not give the saved key, so this service is off. \(readError)")
+                    .font(.caption)
+                    .foregroundStyle(.red)
             }
         }
-        .onAppear { key = app.bypass.key(for: provider) ?? "" }
+        .onAppear {
+            do {
+                key = try app.bypass.loadKey(for: provider) ?? ""
+                readError = nil
+            } catch {
+                readError = error.localizedDescription
+            }
+        }
     }
 
     private func save() {
         saved = app.bypass.setKey(key, for: provider)
+        if saved { readError = nil }
     }
 }

@@ -37,7 +37,7 @@ struct SyncView: View {
                         VStack(alignment: .leading, spacing: 4) {
                             Label(stall.reasonDescription, systemImage: "exclamationmark.triangle.fill")
                                 .foregroundStyle(.orange)
-                            ForEach(stall.localPaths + stall.cloudPaths, id: \.self) { path in
+                            ForEach(Array((stall.localPaths + stall.cloudPaths).enumerated()), id: \.offset) { _, path in
                                 Text(path).font(.caption.monospaced()).foregroundStyle(.secondary).lineLimit(1)
                             }
                         }
@@ -191,7 +191,10 @@ private struct AddSyncSheet: View {
             FolderPicker(title: "Choose a Folder in MEGA", action: "Choose", exclude: []) { handle in
                 remote = handle
                 let sdk = app.engine.sdk
-                remoteName = sdk.node(forHandle: handle).flatMap { sdk.nodePath(for: $0) } ?? "Folder"
+                Task {
+                    let path = await EngineQueue.run { sdk.node(forHandle: handle).flatMap { sdk.nodePath(for: $0) } }
+                    if remote == handle { remoteName = path ?? "Folder" }
+                }
             }
         }
     }

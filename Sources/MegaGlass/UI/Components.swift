@@ -79,6 +79,22 @@ struct NodeBadges: View {
     }
 }
 
+/// A size in a small glass capsule.
+struct SizeTag: View {
+    let bytes: Int64
+
+    var body: some View {
+        Text(Format.bytes(bytes))
+            .font(.caption2.weight(.medium).monospacedDigit())
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .fixedSize()
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .glassEffect(.regular, in: .capsule)
+    }
+}
+
 struct UsageBar: View {
     let fraction: Double
     var height: CGFloat = 6

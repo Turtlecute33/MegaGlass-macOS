@@ -165,7 +165,10 @@ final class TransferCenter {
     @ObservationIgnored var onError: ((any Error) -> Void)?
     @ObservationIgnored private var flushScheduled = false
     @ObservationIgnored private var hideTask: Task<Void, Never>?
+    @ObservationIgnored private var clearedOldPreviews = false
     @ObservationIgnored private let engine: MegaEngine
+    /// Serial: the last speed limit that you set is the one the engine keeps.
+    nonisolated private static let limitsQueue = DispatchQueue(label: "megaglass.transfer-limits")
     @ObservationIgnored var onFinished: ((TransferItem) -> Void)?
 
     init(engine: MegaEngine) {
@@ -226,11 +229,19 @@ final class TransferCenter {
     func loadExisting() async {
         let generation = generation
         let sdk = engine.sdk
+        // Preview downloads of the last run have no window now: the engine must not
+        // resume them (quota, and decrypted files that nothing owns). Only once: later
+        // loads (an account reload) can have live previews.
+        let clearPreviews = !clearedOldPreviews
+        clearedOldPreviews = true
         let snapshots = await EngineQueue.run {
-            let list = sdk.transfers
-            return (0..<list.size).compactMap { list.transfer(at: $0) }
-                .filter { $0.folderTransferTag <= 0 && !$0.isStreamingTransfer && $0.appData != TransferSnapshot.previewTag }
-                .map { TransferSnapshot($0) }
+            let transfers = (0..<sdk.transfers.size).compactMap { sdk.transfers.transfer(at: $0) }
+            if clearPreviews {
+                for transfer in transfers where transfer.appData == TransferSnapshot.previewTag {
+                    sdk.cancelTransfer(transfer)
+                }
+            }
+            return transfers.filter(TransferFeed.isListed).map { TransferSnapshot($0) }
         }
         guard generation == self.generation, !stopped else { return }
         apply(snapshots)
@@ -255,19 +266,22 @@ final class TransferCenter {
         let generation = generation
         apply(feed.drain())
         let sdk = engine.sdk
-        let speeds = activeCount > 0 ? await EngineQueue.run {
+        // Paused, waiting and retrying transfers do not move: no polling for them (it
+        // costs battery). The engine callbacks start the list again.
+        let moving = !isPaused && items.contains { $0.state == .active || $0.state == .completing }
+        let speeds = moving ? await EngineQueue.run {
             (Int64(sdk.currentDownloadSpeed), Int64(sdk.currentUploadSpeed))
         } : (0, 0)
         guard generation == self.generation, !stopped else { return }
         let running = activeCount > 0
-        downloadSpeed = running ? speeds.0 : 0
-        uploadSpeed = running ? speeds.1 : 0
+        downloadSpeed = moving ? speeds.0 : 0
+        uploadSpeed = moving ? speeds.1 : 0
         if running {
             hideTask?.cancel()
             hideTask = nil
             if !showsActivity { showsActivity = true }
-            // Keep the speed readout live while transfers run.
-            scheduleFlush()
+            // Keep the speed readout live while transfers move.
+            if moving { scheduleFlush() }
         } else if showsActivity, hideTask == nil {
             hideTask = Task {
                 try? await Task.sleep(for: .seconds(3))
@@ -326,14 +340,19 @@ final class TransferCenter {
         engine.sdk.cancelTransfer(byTag: item.id)
     }
 
+    /// Only the transfers in the list: open previews keep their downloads.
     func cancelAll() {
-        engine.sdk.cancelTransfers(forDirection: MEGATransferType.download.rawValue)
-        engine.sdk.cancelTransfers(forDirection: MEGATransferType.upload.rawValue)
+        for item in items where !item.isFinished { engine.sdk.cancelTransfer(byTag: item.id) }
     }
 
     func moveToTop(_ item: TransferItem) {
-        if let transfer = engine.sdk.transfer(byTag: item.id) {
-            engine.sdk.moveTransfer(toFirst: transfer)
+        let sdk = engine.sdk
+        let tag = item.id
+        // transfer(byTag:) takes the engine lock: not on the main thread.
+        Task {
+            await EngineQueue.run {
+                if let transfer = sdk.transfer(byTag: tag) { sdk.moveTransfer(toFirst: transfer) }
+            }
         }
     }
 
@@ -366,10 +385,17 @@ final class TransferCenter {
 
     func applyLimits(_ settings: AppSettings) {
         let sdk = engine.sdk
-        sdk.setMaxConnectionsForDirection(.download, connections: min(32, max(1, settings.downloadConnections)))
-        sdk.setMaxConnectionsForDirection(.upload, connections: min(32, max(1, settings.uploadConnections)))
-        sdk.setMaxDownloadSpeed(Self.bytesPerSecond(settings.downloadLimitKB))
-        sdk.setMaxUploadSpeed(Self.bytesPerSecond(settings.uploadLimitKB))
+        let downloads = min(32, max(1, settings.downloadConnections))
+        let uploads = min(32, max(1, settings.uploadConnections))
+        let downloadLimit = Self.bytesPerSecond(settings.downloadLimitKB)
+        let uploadLimit = Self.bytesPerSecond(settings.uploadLimitKB)
+        // The speed setters take the engine lock: not on the main thread.
+        Self.limitsQueue.async {
+            sdk.setMaxConnectionsForDirection(.download, connections: downloads)
+            sdk.setMaxConnectionsForDirection(.upload, connections: uploads)
+            sdk.setMaxDownloadSpeed(downloadLimit)
+            sdk.setMaxUploadSpeed(uploadLimit)
+        }
     }
     nonisolated static func bytesPerSecond(_ kilobytes: Int) -> Int64 {
         Int64(min(max(0, kilobytes), Int(Int64.max / 1024))) * 1024
@@ -401,17 +427,23 @@ nonisolated final class TransferFeed: NSObject, MEGATransferDelegate, @unchecked
     }
 
     func onTransferFinish(_ api: MEGASdk, transfer: MEGATransfer, error: MEGAError) {
-        if error.type != .apiOk, transfer.folderTransferTag <= 0, !transfer.isStreamingTransfer,
-           transfer.appData != TransferSnapshot.previewTag {
+        if error.type != .apiOk, Self.isListed(transfer) {
             lock.withLock { if !retired.contains(transfer.tag) { failed[transfer.tag] = transfer } }
         }
         record(transfer, error: error, finished: true)
     }
 
+    /// The list shows the transfers that you started. Not listed: the files inside a
+    /// folder transfer (the folder reports them), streams, preview downloads, and the
+    /// transfers of syncs and backups (the sync engine retries them; a retry from the
+    /// list would make a second copy).
+    static func isListed(_ transfer: MEGATransfer) -> Bool {
+        transfer.folderTransferTag <= 0 && !transfer.isStreamingTransfer
+            && transfer.appData != TransferSnapshot.previewTag && !transfer.isSyncTransfer
+    }
+
     private func record(_ transfer: MEGATransfer, error: MEGAError?, finished: Bool) {
-        // Files inside a folder transfer report their progress through the folder transfer.
-        guard transfer.folderTransferTag <= 0, !transfer.isStreamingTransfer,
-              transfer.appData != TransferSnapshot.previewTag else { return }
+        guard Self.isListed(transfer) else { return }
         enqueue(TransferSnapshot(transfer, error: error, finished: finished))
     }
 

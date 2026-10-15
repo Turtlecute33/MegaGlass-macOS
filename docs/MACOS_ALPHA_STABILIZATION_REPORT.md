@@ -152,8 +152,11 @@ name → backups attribute → syncFolder → main-queue result.
   There is no start/stop scope imbalance because scope APIs are not used. Persisting
   plain paths is insufficient for a future sandboxed build: bookmarks, stale resolution,
   persistent sync access and restart authorization would need a separate implementation.
-- **Keychain:** session and bypass keys use generic-password items and device-only
-  accessibility. Passwords are not saved. Writes/deletes are checked; session read errors
+- **Keychain:** session and bypass keys use generic-password items in the login
+  (file-based) Keychain. The `ThisDeviceOnly` accessibility value has no effect there
+  (SecItem.h); access is controlled by the item ACL, which follows the code signature.
+  The data protection Keychain needs a signed keychain-access-groups entitlement (Developer
+  ID). Passwords are not saved. Writes/deletes are checked; session read errors
   are distinguished from absence. A nonsecret UserDefaults flag disables restoration
   before token replacement/deletion and is cleared only after a successful save. Actual ACL/ad hoc signature prompts, Keychain lock,
   and signing-identity migration were not exercised.

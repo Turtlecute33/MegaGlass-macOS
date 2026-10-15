@@ -14,6 +14,7 @@ struct MainView: View {
     @Environment(AppModel.self) private var app
     @State private var selection: SidebarItem? = .cloudDrive
     @State private var browser: BrowserModel?
+    @State private var preparingBrowser = false
     #if MEGAGLASS_TESTS
     @State private var resolvingTestFolder = false
     #endif
@@ -111,8 +112,16 @@ struct MainView: View {
             }
         }
         #else
-        if browser == nil, let root = app.engine.sdk.rootNode {
-            browser = BrowserModel(engine: app.engine, start: .folder(root.handle))
+        guard browser == nil, !preparingBrowser else { return }
+        preparingBrowser = true
+        let sdk = app.engine.sdk
+        let generation = app.session.generation
+        Task {
+            defer { preparingBrowser = false }
+            // The root node takes the engine lock: not on the main thread.
+            let root = await EngineQueue.run { sdk.rootNode?.handle }
+            guard browser == nil, app.session.isSignedIn, generation == app.session.generation, let root else { return }
+            browser = BrowserModel(engine: app.engine, start: .folder(root))
             if selection == nil { selection = .cloudDrive }
         }
         #endif
@@ -121,10 +130,21 @@ struct MainView: View {
     private func route(_ item: SidebarItem?) {
         guard let browser, let item else { return }
         let sdk = app.engine.sdk
+        let special: (@Sendable () -> MEGANode?)? = switch item {
+        case .cloudDrive: { sdk.rootNode }
+        case .backups: { sdk.vaultNode }
+        case .rubbish: { sdk.rubbishNode }
+        default: nil
+        }
+        if let special {
+            // These nodes take the engine lock: not on the main thread.
+            Task {
+                guard let handle = await EngineQueue.run({ special()?.handle }), selection == item else { return }
+                browser.reset(to: .folder(handle))
+            }
+            return
+        }
         let target: Location? = switch item {
-        case .cloudDrive: sdk.rootNode.map { .folder($0.handle) }
-        case .backups: sdk.vaultNode.map { .folder($0.handle) }
-        case .rubbish: sdk.rubbishNode.map { .folder($0.handle) }
         case .recents: .recents
         case .favourites: .favourites
         case .incoming: .incomingShares
@@ -211,7 +231,14 @@ private struct LinkSidebarRow: View {
 
     var body: some View {
         Label {
-            Text(session.title).lineLimit(1)
+            HStack(spacing: 6) {
+                Text(session.title).lineLimit(1)
+                Spacer(minLength: 0)
+                if let size = session.totalSize {
+                    SizeTag(bytes: size)
+                        .help(session.kind == .folder ? "Size of the folder with all its subfolders" : "Size of the file")
+                }
+            }
         } icon: {
             if session.state == .opening {
                 ProgressView().controlSize(.mini)

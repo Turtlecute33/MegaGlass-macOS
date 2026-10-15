@@ -73,7 +73,8 @@ struct LinkDetailView: View {
                 Text(message)
             } actions: {
                 Button("Try Again") {
-                    Task { await session.open(using: app.engine, workerThreads: app.settings.workerThreads) }
+                    // In the task that Close Link cancels; a second click does nothing.
+                    session.beginOpen(using: app.engine, workerThreads: app.settings.workerThreads)
                 }
                 Button("Close Link") { app.links.close(session) }
             }

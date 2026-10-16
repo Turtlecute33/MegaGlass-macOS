@@ -1354,7 +1354,7 @@ struct SyncRootTests {
         #expect(SyncCenter.describeError(44, fallback: "Mismatch on sync root FSID.").contains("Remove this sync"))
         for code in [7, 40] {
             let text = SyncCenter.describeError(code, fallback: "Local path not available")
-            #expect(text.contains("Connect its disk") && text.contains("moved or renamed") && text.contains("Files and Folders"))
+            #expect(text.contains("Connect its disk") && text.contains("moved or renamed") && text.contains("Files & Folders"))
         }
         #expect(SyncCenter.describeError(9, fallback: "Storage overquota") == "Storage overquota")
     }

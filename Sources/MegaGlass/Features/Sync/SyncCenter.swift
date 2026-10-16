@@ -131,7 +131,7 @@ final class SyncCenter {
         switch code {
         case 7, 40:
             return "MegaGlass cannot open this folder. Connect its disk or network, check that the folder was not "
-                + "moved or renamed, and allow access in System Settings > Privacy & Security > Files and Folders."
+                + "moved or renamed, and allow access in System Settings > Privacy & Security > Files & Folders."
         case 15: return "This folder is now on a different disk. Remove this sync and add it again to use the new disk."
         case 44: return "This folder was replaced by a different folder. Remove this sync and add it again."
         default: return fallback

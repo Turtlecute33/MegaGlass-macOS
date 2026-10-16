@@ -50,7 +50,12 @@ IDENTITY="${MEGAGLASS_SIGN_IDENTITY:--}"
 SIGNING="$HOME/.config/megaglass/macos-signing.keychain-db"
 if [[ "$IDENTITY" == "-" && -f "$SIGNING" ]]; then
   trap 'security lock-keychain "$SIGNING"' EXIT
-  security unlock-keychain -p "$(security find-generic-password -s megaglass-macos-signing -a keychain -w)" "$SIGNING"
+  # The password goes to security on stdin: other processes can read the arguments of a process.
+  pw=$(security find-generic-password -s megaglass-macos-signing -a keychain -w)
+  print -r -- "unlock-keychain -p \"$pw\" \"$SIGNING\"" | security -i >/dev/null
+  unset pw
+  # Also for a keychain made with no lock timeout.
+  security set-keychain-settings -lut 300 "$SIGNING"
   codesign --force --options runtime --timestamp=none --sign MegaGlass --keychain "$SIGNING" "$APP"
   codesign --verify --strict "$APP"
 elif [[ "$IDENTITY" == "-" && "${SIGNED:-0}" == 1 ]]; then

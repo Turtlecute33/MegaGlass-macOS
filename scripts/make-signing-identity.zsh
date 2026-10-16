@@ -30,7 +30,9 @@ security set-keychain-settings -lut 300 $kc
 security unlock-keychain -p $pw $kc
 security import $tmp/identity.p12 -k $kc -P $pw -T /usr/bin/codesign >/dev/null
 security set-key-partition-list -S apple-tool:,apple: -s -k $pw $kc >/dev/null
-security add-generic-password -U -T "" -s megaglass-macos-signing -a keychain -l "MegaGlass macOS signing keychain" -w $pw
+# -U keeps the access list of an old item, so delete it first.
+security delete-generic-password -s megaglass-macos-signing -a keychain >/dev/null 2>&1 || true
+security add-generic-password -T "" -s megaglass-macos-signing -a keychain -l "MegaGlass macOS signing keychain" -w $pw
 security find-identity -p codesigning $kc
 security lock-keychain $kc
 print "Created $kc"

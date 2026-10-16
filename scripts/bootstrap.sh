@@ -23,8 +23,12 @@ if [[ "$(git -C "$SDK_DIR" rev-parse -q --verify HEAD 2>/dev/null || true)" != "
 fi
 
 # Local patches (see patches/). The work tree must be the pinned commit with exactly these
-# patches: an old patch or a local edit is reset. The trees are compared in a temporary index.
+# patches: an old patch or a local edit is reset, and the edits go to the git stash of the SDK.
+# The trees are compared in a temporary index.
 PATCHES=("$ROOT"/patches/mega-sdk-*.patch(N))
+# Finder makes .DS_Store files; they are not local edits.
+mkdir -p "$SDK_DIR/.git/info"
+grep -qxF .DS_Store "$SDK_DIR/.git/info/exclude" 2>/dev/null || print .DS_Store >> "$SDK_DIR/.git/info/exclude"
 export GIT_INDEX_FILE="$SDK_DIR/.git/megaglass-index"
 rm -f "$GIT_INDEX_FILE"
 git -C "$SDK_DIR" read-tree HEAD
@@ -38,7 +42,11 @@ WORK_TREE=$(git -C "$SDK_DIR" write-tree)
 rm -f "$GIT_INDEX_FILE"
 unset GIT_INDEX_FILE
 if [[ "$WORK_TREE" != "$EXPECTED_TREE" ]]; then
-  print "Resetting MEGA SDK to ${SDK_COMMIT:0:10} with patches/ (local edits are discarded)"
+  if ! git -C "$SDK_DIR" stash push -q --include-untracked -m "bootstrap.sh $(date +%F-%T)"; then
+    print -u2 "Could not save the local edits of Vendor/mega-sdk. Nothing was reset."
+    exit 1
+  fi
+  print "Reset MEGA SDK to ${SDK_COMMIT:0:10} with patches/. Local edits moved to: git -C Vendor/mega-sdk stash list"
   git -C "$SDK_DIR" reset -q --hard
   git -C "$SDK_DIR" clean -q -fd
   for patch in $PATCHES; do git -C "$SDK_DIR" apply "$patch"; done

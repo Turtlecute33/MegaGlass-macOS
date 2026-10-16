@@ -1061,9 +1061,11 @@ final class BypassCenter {
             guard !Task.isCancelled, !(interactive && skipRequested) else { return [] }
             try? await Task.sleep(for: .milliseconds(800))
             // The link can be in an address and not in the page: a pop-up, a destination
-            // handed back, or the page went to MEGA. Only the last ones: a page can make many.
-            let addresses = [browser.currentURL].compactMap { $0 } + browser.popupURLs.suffix(20) + browser.handedBack.suffix(20)
-            let sent = MegaLinkFinder.links(in: addresses.map(\.absoluteString).joined(separator: "\n"))
+            // handed back, or the page went to MEGA. Only the last ones and short ones: a page
+            // can make many, and very long ones.
+            let addresses = ([browser.currentURL].compactMap { $0 } + browser.popupURLs + browser.handedBack)
+                .map(\.absoluteString).filter { $0.utf16.count <= BypassBrowser.maxAddressLength }
+            let sent = MegaLinkFinder.links(in: addresses.joined(separator: "\n"))
             if !sent.isEmpty { return sent }
             guard let page = await browser.scan(resultSelector: nil) else { continue }
             if interactive, collectRequested { return page.mega }
@@ -1196,8 +1198,10 @@ nonisolated enum MegaLinkFinder {
             }
         }
         let range = NSRange(text.startIndex..., in: text)
-        // Each address alone: a "%" in other text (CSS "100%") does not stop the decoding.
         if text.contains("%") {
+            // The whole text, when it decodes: also a link with no scheme (?dest=mega.nz%2Ffolder…).
+            if let decoded = text.removingPercentEncoding, decoded != text { add(LinkParser.links(in: decoded).map(\.0)) }
+            // Each address alone: a "%" in other text (CSS "100%") does not stop the decoding.
             for match in encodedPattern.matches(in: text, range: range) {
                 guard let span = Range(match.range, in: text), text[span].contains("%"),
                       let decoded = text[span].removingPercentEncoding else { continue }
@@ -1292,12 +1296,16 @@ final class BypassBrowser: NSObject, WKNavigationDelegate, WKUIDelegate {
     nonisolated static let userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15"
 
     @ObservationIgnored let webView: WKWebView
+    /// The last 20 of each list, with no address longer than `maxAddressLength`.
     @ObservationIgnored private(set) var popupURLs: [URL] = []
     /// Destinations that a page handed back in an address (?redirect=<destination>), and
     /// MEGA links that the page went to.
     @ObservationIgnored private(set) var handedBack: [URL] = []
-    /// The host of the page on show, for the panel.
+    /// The site of the page on show, for the panel.
     private(set) var host: String?
+
+    /// MEGA links are short; a page can make addresses of megabytes.
+    nonisolated static let maxAddressLength = 16_384
 
     struct PageScan: Decodable {
         let mega: [String]
@@ -1402,13 +1410,13 @@ final class BypassBrowser: NSObject, WKNavigationDelegate, WKUIDelegate {
             .first(where: { $0.name == "redirect" })?.value,
            let destination = URL(string: value), ["http", "https"].contains(destination.scheme?.lowercased() ?? ""),
            destination.host() != url.host() {
-            handedBack.append(destination)
+            Self.keep(destination, in: &handedBack)
             return .cancel
         }
         // A MEGA link is the result: keep it; the MEGA web app is not needed.
         if navigationAction.targetFrame?.isMainFrame != false, let url = navigationAction.request.url,
            url.host().map({ LinkSorter.isMega($0.lowercased()) }) == true, !MegaLinkFinder.links(in: url.absoluteString).isEmpty {
-            handedBack.append(url)
+            Self.keep(url, in: &handedBack)
             return .cancel
         }
         guard let scheme = navigationAction.request.url?.scheme?.lowercased() else { return .allow }
@@ -1420,14 +1428,28 @@ final class BypassBrowser: NSObject, WKNavigationDelegate, WKUIDelegate {
     }
 
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
-        host = webView.url?.host()
+        host = Self.site(of: webView.url)
+    }
+
+    /// The site of a page, for the warning: a blob: page is of the site that made it, and a page
+    /// with no host (data:) is of an unknown site. None for about:blank.
+    nonisolated static func site(of url: URL?) -> String? {
+        guard let url, let scheme = url.scheme?.lowercased(), scheme != "about" else { return nil }
+        let inner = scheme == "blob" ? URL(string: String(url.absoluteString.dropFirst("blob:".count))) : url
+        return inner?.host().flatMap { $0.isEmpty ? nil : $0 } ?? "an unknown site"
+    }
+
+    private static func keep(_ url: URL, in list: inout [URL]) {
+        guard url.absoluteString.utf16.count <= maxAddressLength else { return }
+        list.append(url)
+        if list.count > 20 { list.removeFirst(list.count - 20) }
     }
 
     /// Pop-ups do not open; their address can be the result.
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
                  for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
         if let url = navigationAction.request.url, ["http", "https"].contains(url.scheme?.lowercased() ?? "") {
-            popupURLs.append(url)
+            Self.keep(url, in: &popupURLs)
         }
         return nil
     }

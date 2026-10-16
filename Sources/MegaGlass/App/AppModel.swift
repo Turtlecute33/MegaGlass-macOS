@@ -66,6 +66,8 @@ final class AppModel {
     @ObservationIgnored var openMainWindow: (() -> Void)?
 
     @ObservationIgnored private var toastTask: Task<Void, Never>?
+    @ObservationIgnored private var schemeLinks = LinkSorter.Result()
+    @ObservationIgnored private var schemeTask: Task<Void, Never>?
     @ObservationIgnored private var started = false
     @ObservationIgnored private var activity: (any NSObjectProtocol)?
 
@@ -126,6 +128,7 @@ final class AppModel {
             self?.syncs.reload()
             self?.transfers.reset()
         }
+        session.onSessionEnded = { [weak self] in self?.showMainWindow() }
         transfers.onFinished = { [weak self] item in
             if item.state == .failed, let message = item.errorMessage {
                 self?.notify("\(item.name): \(message)", symbol: "exclamationmark.triangle")
@@ -287,18 +290,28 @@ final class AppModel {
             }
             return
         }
-        if !confirmed, source == .clipboard || source == .scheme, sorted.mega.count > LinkCenter.askAbove {
-            pendingLinks = PendingLinks(sorted: sorted, source: source)
+        // Links that are open already do not count: the same text again opens the next ones.
+        let open = Set(links.sessions.map { LinkParser.identity(of: $0.link) })
+        var fresh = sorted
+        fresh.mega = sorted.mega.filter { !open.contains(LinkParser.identity(of: $0)) }
+        if !confirmed, source == .clipboard || source == .scheme, fresh.mega.count > LinkCenter.askAbove {
+            pendingLinks = PendingLinks(sorted: fresh, source: source)
             showMainWindow()
             return
         }
-        let mega = Array(sorted.mega.prefix(LinkCenter.openLimit))
-        if !mega.isEmpty {
-            let opened = links.open(text: mega.joined(separator: "\n"), account: engine, workerThreads: settings.workerThreads)
-            linkToShow = opened.first?.id
+        let mega = Array(fresh.mega.prefix(LinkCenter.openLimit))
+        if let first = sorted.mega.first {
+            if mega.isEmpty {
+                linkToShow = links.sessions.first { LinkParser.identity(of: $0.link) == LinkParser.identity(of: first) }?.id
+            } else {
+                let opened = links.open(text: mega.joined(separator: "\n"), account: engine, workerThreads: settings.workerThreads)
+                linkToShow = opened.first?.id
+            }
+            // With no account, the links show in guest mode, not behind the login screen.
+            if session.phase == .signedOut, linkToShow != nil { session.isGuest = true }
         }
-        if mega.count < sorted.mega.count, !confirmed {
-            alert = AlertItem(title: "\(mega.count) of \(sorted.mega.count) MEGA links open",
+        if mega.count < fresh.mega.count, !confirmed {
+            alert = AlertItem(title: "\(mega.count) of \(fresh.mega.count) new MEGA links open",
                               message: "One action opens up to \(LinkCenter.openLimit) links. To open the others, paste them in Open Links.")
         }
         if !sorted.protected.isEmpty {
@@ -307,9 +320,25 @@ final class AppModel {
         }
         var parts: [String] = []
         if !mega.isEmpty { parts.append(mega.count == 1 ? "1 MEGA link" : "\(mega.count) MEGA links") }
+        else if !sorted.mega.isEmpty { parts.append(sorted.mega.count == 1 ? "The MEGA link is open already" : "The MEGA links are open already") }
         if !sorted.protected.isEmpty { parts.append(sorted.protected.count == 1 ? "1 link to bypass" : "\(sorted.protected.count) links to bypass") }
         notify(parts.joined(separator: ", "), symbol: source == .clipboard ? "doc.on.clipboard" : "link")
         if source != .paste { showMainWindow() }
+    }
+
+    /// Links from another app. A web page sends each mega:// link as its own event: the links
+    /// of events less than half a second apart count together, for the question and the limit.
+    func receiveFromOtherApp(_ sorted: LinkSorter.Result) {
+        schemeLinks.add(sorted)
+        schemeTask?.cancel()
+        schemeTask = Task {
+            try? await Task.sleep(for: .milliseconds(500))
+            guard !Task.isCancelled else { return }
+            let links = schemeLinks
+            schemeLinks = LinkSorter.Result()
+            schemeTask = nil
+            handleIncoming(links, source: .scheme)
+        }
     }
 
     /// The menu command reads the clipboard itself: macOS can ask first, or deny it.

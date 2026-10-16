@@ -128,7 +128,9 @@ screenshot driver are separate tools; the screenshot driver uses a saved account
   Logout retires account thumbnails after pending SDK writes finish.
 - Dependencies are built from source at pinned versions, not from MEGA's prebuilt
   binaries (those have curl 8.1.2 and libsodium 1.0.16). curl 8.23.0 uses OpenSSL 3.6.5 for
-  TLS and the macOS trust store for certificates. The pins do not update by themselves; see
+  TLS and has only the HTTP and WebSocket protocols. The SDK authenticates the MEGA API by its
+  pinned public key (`CURLOPT_PINNEDPUBLICKEY`); transfer connections carry end-to-end
+  encrypted data and are not certificate-checked. The pins do not update by themselves; see
   [scripts/ports](scripts/ports/README.md).
 
 ## Notes
@@ -142,7 +144,10 @@ screenshot driver are separate tools; the screenshot driver uses a saved account
 - Signing: `scripts/make-signing-identity.zsh` (once) makes the stable self-signed identity
   that `build-app.sh` uses; back up `~/.config/megaglass/macos-signing.keychain-db`. macOS asks
   before `build-app.sh` reads the keychain password (click Allow, not Always Allow), and the
-  signing keychain locks again after the build. For a
+  signing keychain locks again after the build. For a signing keychain made by an older
+  `make-signing-identity.zsh`, do this once: in Keychain Access, open the item
+  `megaglass-macos-signing`, select Access Control, select "Confirm before allowing access", and
+  remove `security` from the list. For a
   notarized app, set `MEGAGLASS_SIGN_IDENTITY` (a Developer ID Application identity) and
   `MEGAGLASS_NOTARY_PROFILE` (a `notarytool store-credentials` profile).
 - With no identity, the app is signed ad hoc. After each rebuild, macOS can ask once for

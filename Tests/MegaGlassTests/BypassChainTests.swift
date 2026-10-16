@@ -339,6 +339,19 @@ struct BypassParserTests {
         #expect(MegaLinkFinder.links(in: "50% off: https://mega.nz/file/XyZ12345%23FileKey-0123456789abcdef").contains(megaFile))
     }
 
+    @Test func megaLinkFinderReadsEncodedLinksWithNoScheme() {
+        let address = "https://locker.example/go?id=5&dest=mega.nz%2Ffolder%2FAbCdEfGh%23Key-1234567890abcdefghij"
+        #expect(MegaLinkFinder.links(in: address) == [megaFolder])
+    }
+
+    @Test func warningNamesTheSiteOfEveryPage() throws {
+        #expect(BypassBrowser.site(of: URL(string: "https://evil.example/login")) == "evil.example")
+        #expect(BypassBrowser.site(of: URL(string: "blob:https://evil.example/0b9d4a1e-5d1c-4f0e-9a43-1f7c0a2b3c4d")) == "evil.example")
+        #expect(BypassBrowser.site(of: URL(string: "data:text/html,<p>login</p>")) == "an unknown site")
+        #expect(BypassBrowser.site(of: URL(string: "about:blank")) == nil)
+        #expect(BypassBrowser.site(of: nil) == nil)
+    }
+
     @Test func megaLinkFinderCountsEachLinkOnce() {
         let plain = (0..<5000).map { "https://mega.nz/file/H\($0)#K\($0)" }
         let base64 = plain.prefix(500).map { Data($0.utf8).base64EncodedString() }
@@ -405,6 +418,42 @@ struct AdBlockerTests {
         #expect(await shown("text") == "block")
     }
 
+    @Test func localRulesBlockAddressesWithAUserName() async throws {
+        let listener = try LoopbackListener()
+        defer { listener.stop() }
+        let port = listener.port
+        let html = """
+            <img src="http://u@127.0.0.1:\(port)/image">
+            <script>
+            const request = new XMLHttpRequest();
+            request.open('GET', 'http://127.0.0.1:\(port)/xhr', true, 'u', 'p');
+            request.send();
+            try { new WebSocket('ws://u@127.0.0.1:\(port)/socket'); } catch (e) {}
+            </script>
+            """
+        let load = { (rules: WKContentRuleList?) async in
+            let browser = BypassBrowser()
+            defer { browser.stop() }
+            if let rules { browser.webView.configuration.userContentController.add(rules) }
+            browser.webView.loadHTMLString(html, baseURL: URL(string: "https://page.example/"))
+            await browser.waitUntilLoaded(timeout: 10)
+            try? await Task.sleep(for: .seconds(2))
+        }
+        // Without the rules, the page reaches the port: the check below means something.
+        await load(nil)
+        #expect(listener.connections > 0)
+
+        let folder = FileManager.default.temporaryDirectory.appending(path: "megaglass-local-rules-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        // A private store: the rules of the app are not touched.
+        let store = try #require(WKContentRuleListStore(url: folder))
+        let rules = try await store.compileContentRuleList(forIdentifier: "local", encodedContentRuleList: AdBlocker.localRuleJSON)
+        let before = listener.connections
+        await load(rules)
+        #expect(listener.connections == before)
+    }
+
     @Test func scanFindsLinksInBase64AndScripts() async throws {
         let browser = BypassBrowser()
         defer { browser.stop() }
@@ -430,4 +479,46 @@ struct AdBlockerTests {
         let page = try #require(await browser.scan(resultSelector: nil))
         #expect(page.mega == [megaFile])
     }
+}
+
+/// Counts the connections to a port on 127.0.0.1 (no other network).
+nonisolated final class LoopbackListener: @unchecked Sendable {
+    let port: UInt16
+    private let source: any DispatchSourceRead
+    private let lock = NSLock()
+    private var count = 0
+
+    var connections: Int { lock.withLock { count } }
+
+    init() throws {
+        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        guard fd >= 0 else { throw POSIXError(.EMFILE) }
+        var address = sockaddr_in()
+        address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        address.sin_family = sa_family_t(AF_INET)
+        address.sin_addr.s_addr = inet_addr("127.0.0.1")
+        var length = socklen_t(MemoryLayout<sockaddr_in>.size)
+        let ready = withUnsafeMutablePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                bind(fd, $0, length) == 0 && getsockname(fd, $0, &length) == 0 && listen(fd, 16) == 0
+            }
+        }
+        guard ready else {
+            close(fd)
+            throw POSIXError(.EADDRNOTAVAIL)
+        }
+        port = UInt16(bigEndian: address.sin_port)
+        source = DispatchSource.makeReadSource(fileDescriptor: fd, queue: .global())
+        source.setEventHandler { [weak self] in
+            let client = accept(fd, nil, nil)
+            guard client >= 0 else { return }
+            close(client)
+            guard let self else { return }
+            lock.withLock { count += 1 }
+        }
+        source.setCancelHandler { close(fd) }
+        source.resume()
+    }
+
+    func stop() { source.cancel() }
 }

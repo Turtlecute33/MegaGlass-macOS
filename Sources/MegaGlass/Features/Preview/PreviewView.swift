@@ -279,8 +279,9 @@ struct PreviewView: View {
                 // The other player does not tell when the stream fails: check the stream here first.
                 let external = await externalStream(routes)
                 guard !Task.isCancelled, !invalidated else { return }
-                state = .cannotPlay(external.url == nil ? external.reason : "macOS cannot play \(item.fileExtension.uppercased()) files.",
-                                    stream: external.url)
+                state = .cannotPlay(external.stream == nil ? external.reason
+                                        : "macOS cannot play \(item.fileExtension.uppercased()) files." + keyNote(external.stream?.route, routes: routes),
+                                    stream: external.stream?.url)
                 return
             }
             guard let first = routes.first, let url = await address(first) else {
@@ -418,13 +419,19 @@ struct PreviewView: View {
                 continue
             }
             // With data but no picture, the player cannot play the file; another player can.
-            var stream: URL?
-            if check.route != nil { stream = await externalStream(routes).url ?? url }
+            // Probe again only when the other player prefers a route that this check did not reach.
+            var stream: (route: StreamRoute, url: URL)?
+            if let working = check.route {
+                stream = (route, url)
+                if working != route || working != externalOrder(routes).first {
+                    stream = await externalStream(routes).stream ?? stream
+                }
+            }
             guard !Task.isCancelled, !invalidated, self.player === player else { return }
             player.pause()
             self.player = nil
             state = check.route == nil ? .cannotPlay(check.reason, stream: nil)
-                : .cannotPlay(Self.formatFailure(playerItem.error), stream: stream)
+                : .cannotPlay(Self.formatFailure(playerItem.error) + keyNote(stream?.route, routes: routes), stream: stream?.url)
             return
         }
     }
@@ -493,14 +500,26 @@ struct PreviewView: View {
         return (nil, "The stream gives no data (" + failures.joined(separator: "; ") + ").")
     }
 
-    /// A stream for another player app, or why none works. That app keeps the address in its
-    /// history: the link's own route goes first, because its address has no file key.
-    private func externalStream(_ routes: [StreamRoute]) async -> (url: URL?, reason: String) {
-        let check = await workingRoute(routes.reversed())
+    /// The routes for another player app. That app keeps the address in its history, and only
+    /// the link's own route has no file key in its address: it goes first, unless the account is
+    /// paid. The link route uses the network's free limit, and the other player cannot change routes.
+    private func externalOrder(_ routes: [StreamRoute]) -> [StreamRoute] {
+        app.session.account?.isPaid == true ? routes : routes.reversed()
+    }
+
+    /// A stream for another player app, or why none works.
+    private func externalStream(_ routes: [StreamRoute]) async -> (stream: (route: StreamRoute, url: URL)?, reason: String) {
+        let check = await workingRoute(externalOrder(routes))
         guard let route = check.route, let url = await address(route) else {
             return (nil, check.route == nil ? check.reason : "The local stream did not start.")
         }
-        return (url, "")
+        return ((route, url), "")
+    }
+
+    /// A file of a folder link that streams through the account: its address holds the file key.
+    private func keyNote(_ route: StreamRoute?, routes: [StreamRoute]) -> String {
+        guard let route, routes.count > 1, route == routes.first else { return "" }
+        return " The player keeps the stream address, with the key of this file, in its history."
     }
 
     /// .ts and .mts are also TypeScript. A video starts with the MPEG-TS sync byte 0x47, or

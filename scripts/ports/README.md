@@ -9,10 +9,12 @@ of the build machine. The remaining dependencies stay pinned by the SDK manifest
 SQLite comes from macOS.
 
 The SDK's original baseline selected curl 8.14.1 with Apple Secure Transport. curl 8.14.1 has
-subsequently published security advisories, and curl 8.15.0 removed Secure Transport. curl now
-uses OpenSSL for TLS (TLS 1.3 too) and the macOS trust store for certificates
-(`USE_APPLE_SECTRUST`). The SDK pins the MEGA API public key with `CURLOPT_PINNEDPUBLICKEY`,
-which OpenSSL supports.
+subsequently published security advisories, and curl 8.15.0 removed Secure Transport. curl 8.23.0
+uses OpenSSL 3.6.5 for TLS (TLS 1.3 too). The SDK authenticates the MEGA API by its pinned public
+key (`CURLOPT_PINNEDPUBLICKEY`, which OpenSSL supports); transfer connections carry end-to-end
+encrypted data and are not certificate-checked. The triplet (`scripts/triplets`) turns off the
+curl protocols other than HTTP and WebSocket, and `scripts/build-deps.sh` checks that libcurl has
+none of them.
 
 `scripts/build-deps.sh` puts these ports before the SDK ports, checks the installed versions,
 and rebuilds when a port changes. These are pinned versions: they do not update by themselves.
@@ -20,7 +22,7 @@ When a version or a library changes, update `Resources/ThirdPartyNotices.txt` (t
 are in `Vendor/vcpkg/installed/arm64-osx-megaglass/share/<port>/copyright`).
 
 Sources: [vcpkg revision](https://github.com/microsoft/vcpkg/tree/357b1a6f8343064ca982a20771e420fcecfe7efc/ports),
-[curl advisories](https://curl.se/docs/vuln-8.14.1.html),
+[curl advisories](https://curl.se/docs/vuln-8.23.0.html),
 [OpenSSL advisories](https://www.openssl-library.org/news/vulnerabilities/index.html),
 [libsodium releases](https://github.com/jedisct1/libsodium/releases), and
 [zlib releases](https://zlib.net/).

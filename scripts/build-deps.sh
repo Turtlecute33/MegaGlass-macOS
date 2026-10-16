@@ -13,8 +13,9 @@ SDK_DIR="$VENDOR/mega-sdk"
 VCPKG_DIR="$VENDOR/vcpkg"
 DEPS_DIR="$VENDOR/deps"
 TRIPLET="arm64-osx-megaglass"
-# curl[core,...] drops the default non-HTTP protocols. curl uses OpenSSL for TLS and the macOS
-# trust store for certificates (USE_APPLE_SECTRUST in the port).
+# The triplet turns off the non-HTTP protocols of curl. curl 8.23.0 uses OpenSSL 3.6.5 for TLS.
+# The SDK authenticates the MEGA API by its pinned public key (CURLOPT_PINNEDPUBLICKEY); transfer
+# connections carry end-to-end encrypted data and are not certificate-checked.
 PACKAGES=(cryptopp "curl[core,openssl,websockets,zstd]" libsodium libuv)
 
 export VCPKG_DISABLE_METRICS=1
@@ -24,6 +25,8 @@ export VCPKG_DISABLE_METRICS=1
 if [[ -d /Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk ]] && ! xcode-select -p | grep -q Xcode.app; then
   export SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk
 fi
+# The SDK goes into PINS and the vcpkg ABI also when Xcode selects it.
+export SDKROOT="${SDKROOT:-${$(xcrun --show-sdk-path):A}}"
 
 BASELINE=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['builtin-baseline'])" "$SDK_DIR/vcpkg.json")
 
@@ -52,6 +55,14 @@ if [[ "$(git -C "$VCPKG_DIR" rev-parse -q --verify HEAD 2>/dev/null || true)" !=
 fi
 if [[ ! -x "$VCPKG_DIR/vcpkg" ]]; then
   "$VCPKG_DIR/bootstrap-vcpkg.sh" -disableMetrics
+fi
+# libuv, zstd and the vcpkg scripts come from this tree: a local edit there must not ship.
+EDITS=$(git -C "$VCPKG_DIR" status --porcelain -- . ':(exclude,glob)**/.DS_Store')
+if [[ -n "$EDITS" ]]; then
+  print -u2 "Vendor/vcpkg has local edits:"
+  print -ru2 -- "$EDITS"
+  print -u2 "To discard these edits: git -C Vendor/vcpkg checkout -f HEAD -- . && git -C Vendor/vcpkg clean -fd"
+  exit 1
 fi
 
 # vcpkg does not rebuild a port that is already installed, so start from an empty tree.
@@ -82,6 +93,13 @@ for manifest in manifests:
     if installed.get(port["name"]) != expected:
         sys.exit(f"{port['name']} {installed.get(port['name'])} is installed, not {expected} from scripts/ports")
 EOF
+
+# No protocol code but HTTP and WebSocket in libcurl (see the triplet).
+CURL_SYMBOLS=$(nm "$VCPKG_DIR/installed/$TRIPLET/lib/libcurl.a")
+if grep -qE ' t _(dict|file|ftp|gopher|imap|ipfs|mqtt|pop3|rtsp|smtp|telnet|tftp)_' <<< "$CURL_SYMBOLS"; then
+  print -u2 "libcurl contains non-HTTP protocols"
+  exit 1
+fi
 
 mkdir -p "$DEPS_DIR"
 cp -R "$VCPKG_DIR/installed/$TRIPLET/include" "$DEPS_DIR/include"

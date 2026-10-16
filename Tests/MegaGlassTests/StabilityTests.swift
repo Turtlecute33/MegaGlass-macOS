@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 import CoreGraphics
 import ImageIO
 import Observation
@@ -307,12 +308,16 @@ struct AuthenticationTests {
         defer { engine.shutdown(); try? FileManager.default.removeItem(at: root) }
         let auth = MockAuthentication(), credentials = MemoryCredentials()
         let session = Session(engine: engine, authentication: auth, credentials: credentials)
+        var ended = 0
+        session.onSessionEnded = { ended += 1 }
         await session.start()
         try await session.signIn(email: "tester@example.invalid", password: "fixture", code: nil)
         engine.onSessionExpired?(nil)
         #expect(await eventually { session.phase == .signedOut })
         #expect(credentials.token == nil)
         #expect(session.startupMessage == "Your session has expired. Log in again.")
+        // The login screen with the reason opens, also with no window.
+        #expect(ended == 1)
         // MEGA already ended the session: the logout happens on this Mac only.
         #expect(auth.logoutCount == 0)
         #expect(auth.localLogoutCount == 1)
@@ -821,6 +826,22 @@ struct PlatformTests {
         #expect(LinkPresentation.keys(of: links) == ["key1", "key2"])
     }
 
+    @Test func copiesWithALinkInTheirTextAreRead() async {
+        // A private pasteboard: the clipboard of the Mac is not touched.
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("megaglass-test-" + UUID().uuidString))
+        defer { pasteboard.releaseGlobally() }
+        func copied(_ text: String) async -> String? {
+            pasteboard.clearContents()
+            pasteboard.setString(text, forType: .string)
+            return await ClipboardWatcher.copiedText(from: pasteboard.name, changeCount: pasteboard.changeCount)
+        }
+        for text in ["https://mega.nz/file/XyZ12345#FileKey", "Download: https://mega.nz/file/XyZ12345#FileKey thanks",
+                     "https://mega.nz/file/XyZ12345#FileKey\nhttps://mega.nz/folder/AbCdEfGh#Key"] {
+            #expect(await copied(text) == text)
+        }
+        #expect(await copied("A note with no address in it") == nil)
+    }
+
     @Test func longRemoteNamesFitTheFileSystem() {
         let name = String(repeating: "é", count: 300) + ".mp4"
         let safe = LocalFileSafety.filename(name)
@@ -838,6 +859,11 @@ struct PlatformTests {
         let marks = LocalFileSafety.filename(String(repeating: "\u{01D8}", count: 100) + ".txt")
         #expect(marks.hasSuffix(".txt") && marks.decomposedStringWithCanonicalMapping.utf16.count <= 240)
         #expect(LocalFileSafety.filename(String(repeating: "x", count: 236) + ".txt").count == 240)
+        // On exFAT or a network disk, the SDK writes each of \ ? " < > | * as "%xx".
+        let escaped = LocalFileSafety.filename(String(repeating: "x", count: 228) + String(repeating: "?", count: 8) + ".txt")
+        let written = escaped.replacingOccurrences(of: "?", with: "%3f")
+        #expect(escaped.hasSuffix(".txt") && written.utf8.count <= 240 && written.utf16.count <= 240)
+        #expect(LocalFileSafety.filename("a?b*.txt") == "a?b*.txt")
     }
 
     @Test func shortenedNamesCanBeWritten() throws {
@@ -857,13 +883,18 @@ struct PlatformTests {
 
     @Test func remoteNamesLoseDirectionMarksAndControls() {
         #expect(LocalFileSafety.displayName("invoice\u{202E}fdp.terminal") == "invoicefdp.terminal")
-        let marks = "\u{061C}\u{200B}\u{200C}\u{200D}\u{200E}\u{200F}\u{202A}\u{202B}\u{202C}\u{202D}\u{202E}"
+        let marks = "\u{061C}\u{200B}\u{200E}\u{200F}\u{202A}\u{202B}\u{202C}\u{202D}\u{202E}"
             + "\u{2060}\u{2061}\u{2064}\u{2066}\u{2067}\u{2068}\u{2069}\u{FEFF}"
         #expect(LocalFileSafety.displayName("a" + marks + "b.txt") == "ab.txt")
         #expect(LocalFileSafety.displayName("a\nb\u{0}\u{1B}\u{7F}\u{85}\u{9F}.txt")
                 == "a\u{FFFD}b\u{FFFD}\u{FFFD}\u{FFFD}\u{FFFD}\u{FFFD}.txt")
         #expect(LocalFileSafety.displayName("invoice.pdf\u{2028}.terminal") == "invoice.pdf\u{FFFD}.terminal")
         #expect(LocalFileSafety.displayName("日本語 😀 Ünïcode – ok.txt") == "日本語 😀 Ünïcode – ok.txt")
+        // Joiners stay: emoji sequences and Persian or Indic names need them.
+        for joined in ["👨\u{200D}👩\u{200D}👧.jpg", "می\u{200C}خواهم.txt"] {
+            #expect(LocalFileSafety.displayName(joined) == joined)
+            #expect(LocalFileSafety.filename(joined) == joined)
+        }
         // The same rules give the names on disk.
         #expect(LocalFileSafety.filename("photo\u{202E}gpj.app") == "photogpj.app")
         #expect(LocalFileSafety.filename("\u{202E}\u{200F}") == "Untitled")
@@ -921,6 +952,9 @@ struct PlatformTests {
         #expect(MegaFailure.fatalErrorMessage(reason: 3)?.contains("disk is full") == true)
         #expect(MegaFailure.fatalErrorMessage(reason: 2) != nil)
         #expect(MegaFailure.fatalErrorMessage(reason: -1) != nil)
+        // The syncs stay off after the restart.
+        #expect(MegaFailure.fatalErrorMessage(reason: 2)?.contains("resume your syncs") == true)
+        #expect(MegaFailure.fatalErrorMessage(reason: 3)?.contains("resume your syncs") == true)
         // Sync settings problems stop no sync.
         #expect(MegaFailure.fatalErrorMessage(reason: 5) == nil)
         #expect(MegaFailure.fatalErrorMessage(reason: 6) == nil)
@@ -1183,6 +1217,8 @@ struct ThumbnailTests {
         let huge = try file(encodedImage("public.png", width: 1, height: 5000))
         #expect(ThumbnailStore.decodeAttribute(huge, preview: true) == nil)
         #expect(ThumbnailStore.decodeAttribute(try file(Data("not an image".utf8)), preview: false) == nil)
+        // No MEGA app writes WebP attributes.
+        #expect(!ThumbnailStore.attributeTypes.contains("org.webmproject.webp"))
     }
 
     @Test func otherImageTypeIsNotShownOrCached() async throws {
@@ -1219,6 +1255,16 @@ struct SyncRootTests {
         #expect(SyncCenter.rootProblem(base.appending(path: "Documents"), otherRoots: [], appFolders: []) == nil)
     }
 
+    @Test func cloudDriveFoldersCanBeSynced() {
+        let library = home.appending(path: "Library")
+        #expect(SyncCenter.rootProblem(library.appending(path: "Mobile Documents/com~apple~CloudDocs"), otherRoots: [], appFolders: []) == nil)
+        #expect(SyncCenter.rootProblem(library.appending(path: "Mobile Documents/com~apple~CloudDocs/Work"), otherRoots: [], appFolders: []) == nil)
+        #expect(SyncCenter.rootProblem(library.appending(path: "CloudStorage/Dropbox"), otherRoots: [], appFolders: []) == nil)
+        #expect(SyncCenter.rootProblem(library.appending(path: "CloudStorage"), otherRoots: [], appFolders: []) != nil)
+        #expect(SyncCenter.rootProblem(library.appending(path: "Mobile Documents"), otherRoots: [], appFolders: []) != nil)
+        #expect(SyncCenter.rootProblem(library.appending(path: "Mobile Documents/com~apple~Pages"), otherRoots: [], appFolders: []) != nil)
+    }
+
     @Test func symlinkToAProtectedFolderIsRefused() throws {
         let link = FileManager.default.temporaryDirectory.appending(path: "megaglass-link-" + UUID().uuidString)
         try FileManager.default.createSymbolicLink(at: link, withDestinationURL: home.appending(path: "Library"))
@@ -1253,5 +1299,10 @@ struct SyncRootTests {
         #expect(SyncCenter.describeStall(reason: 2, problems: [14, 21]) == "Waiting for another move to finish.")
         #expect(SyncCenter.describeStall(reason: 3, problems: []) == "Waiting for the folder scan to finish.")
         #expect(SyncCenter.describeStall(reason: 99, problems: [99]) == "This item cannot be synced.")
+        // A changed disk or root folder needs a new sync: Resume fails again.
+        #expect(SyncCenter.describeError(15, fallback: "Local filesystem mismatch").contains("Remove this sync"))
+        #expect(SyncCenter.describeError(44, fallback: "Mismatch on sync root FSID.").contains("Remove this sync"))
+        #expect(SyncCenter.describeError(7, fallback: "Local path not available").contains("Connect the disk"))
+        #expect(SyncCenter.describeError(9, fallback: "Storage overquota") == "Storage overquota")
     }
 }

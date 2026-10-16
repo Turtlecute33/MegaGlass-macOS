@@ -37,7 +37,11 @@ final class LinkSession: Identifiable {
     @ObservationIgnored private var closed = false
     @ObservationIgnored private var openingTask: Task<Void, Never>?
     @ObservationIgnored private var peekTask: Task<Void, Never>?
+    /// The logout of an engine that `suspend` stopped: a new engine waits for it.
+    @ObservationIgnored private var suspending: Task<Void, Never>?
     @ObservationIgnored private var resolvedLink: String
+    /// Called before a folder link starts its engine (LinkCenter limits the engines).
+    @ObservationIgnored var willStartEngine: ((LinkSession) -> Void)?
 
     init(link: String, kind: Kind, id: UUID = UUID()) {
         self.id = id
@@ -76,10 +80,19 @@ final class LinkSession: Identifiable {
 
     func beginOpen(using account: MegaEngine, workerThreads: Int) {
         guard !closed, openingTask == nil else { return }
-        openingTask = Task {
-            defer { openingTask = nil }
-            await open(using: account, workerThreads: workerThreads)
+        run { await self.open(using: account, workerThreads: workerThreads) }
+    }
+
+    /// The opening task. `suspend` can cancel it and a new one can start before it ends.
+    @discardableResult
+    private func run(_ work: @escaping () async -> Void) -> Task<Void, Never> {
+        let task = Task { await work() }
+        openingTask = task
+        Task {
+            await task.value
+            if openingTask == task { openingTask = nil }
         }
+        return task
     }
 
     func open(using account: MegaEngine, workerThreads: Int) async {
@@ -113,6 +126,12 @@ final class LinkSession: Identifiable {
                     _ = try? await oldSdk.request(accepting: [.apiESid]) { oldSdk.localLogout(with: $0) }
                     guard !closed, !Task.isCancelled else { return }
                 }
+                // The logout of a stopped engine of this link ends before a new one uses its folder.
+                if let suspending {
+                    await suspending.value
+                    guard !closed, !Task.isCancelled else { return }
+                }
+                willStartEngine?(self)
                 let engine = MegaEngine(kind: .folderLink,
                                         id: "link-" + id.uuidString,
                                         basePath: AppPaths.linkEngine(id.uuidString),
@@ -147,12 +166,7 @@ final class LinkSession: Identifiable {
 
     func unlock(password: String, using account: MegaEngine, workerThreads: Int) async {
         guard !closed, openingTask == nil else { return }
-        let task = Task {
-            defer { openingTask = nil }
-            await unlockLink(password: password, using: account, workerThreads: workerThreads)
-        }
-        openingTask = task
-        await task.value
+        await run { await self.unlockLink(password: password, using: account, workerThreads: workerThreads) }.value
     }
 
     private func unlockLink(password: String, using account: MegaEngine, workerThreads: Int) async {
@@ -172,6 +186,37 @@ final class LinkSession: Identifiable {
         }
     }
 
+    /// Stops the engine of a folder link and keeps its cache: the link opens again when you
+    /// select it.
+    func suspend() {
+        guard !closed, let engine else { return }
+        openingTask?.cancel()
+        openingTask = nil
+        browser?.stop()
+        browser = nil
+        self.engine = nil
+        state = .idle
+        engine.shutdown()
+        let sdk = engine.sdk
+        let previous = suspending
+        suspending = Task {
+            await previous?.value
+            _ = try? await sdk.request(accepting: [.apiESid]) { sdk.localLogout(with: $0) }
+        }
+    }
+
+    /// Deletes the cache and the decrypted thumbnails of a closed link with no engine: of the
+    /// last run, of a stopped engine, or of a file link. `close` deletes those of an engine.
+    func removeCache() {
+        let caches = [AppPaths.caches.appending(path: "links/\(id.uuidString)"),
+                      AppPaths.caches.appending(path: "thumbnails/link-\(id.uuidString)")]
+        let suspending = suspending
+        Task {
+            await suspending?.value
+            await EngineQueue.run { caches.forEach(AppPaths.removeAll) }
+        }
+    }
+
     func close() {
         guard !closed else { return }
         closed = true
@@ -180,14 +225,7 @@ final class LinkSession: Identifiable {
         peekTask?.cancel()
         peekTask = nil
         browser?.stop()
-        guard let engine else {
-            // The decrypted thumbnail and preview of a file link.
-            if fileThumbnails != nil {
-                let thumbnails = AppPaths.thumbnails("link-" + id.uuidString)
-                Task { await EngineQueue.run { AppPaths.removeAll(at: thumbnails) } }
-            }
-            return
-        }
+        guard let engine else { return }
         engine.shutdown()
         let sdk = engine.sdk
         let path = AppPaths.linkEngine(id.uuidString)
@@ -217,6 +255,11 @@ final class LinkCenter {
 
     /// The most links that one action opens.
     static let openLimit = 50
+    /// The most folder-link engines at the same time: each one keeps files and connections
+    /// open. The link selected least recently stops first; it opens again when you select it.
+    static let engineLimit = 8
+    /// Link IDs, the link selected last at the end.
+    @ObservationIgnored private var recent: [UUID] = []
     /// More links than this from a copy or from another app: the app asks first.
     static let askAbove = 10
 
@@ -267,7 +310,26 @@ final class LinkCenter {
         isRestored = true
         sessions = restored + sessions
         for session in restored {
+            session.willStartEngine = { [weak self] in self?.makeRoom(for: $0) }
             session.prepare(using: account, workerThreads: workerThreads)
+        }
+    }
+
+    /// The link shows in the main window.
+    func select(_ session: LinkSession) {
+        recent.removeAll { $0 == session.id }
+        recent.append(session.id)
+    }
+
+    /// Before a folder link starts its engine: stops the engines of the links selected least
+    /// recently, so that at most `engineLimit` run.
+    private func makeRoom(for session: LinkSession) {
+        select(session)
+        let others = sessions.filter { $0.engine != nil && $0 !== session }
+        guard others.count >= Self.engineLimit else { return }
+        let order = { (other: LinkSession) in self.recent.firstIndex(of: other.id) ?? -1 }
+        for other in others.sorted(by: { order($0) < order($1) }).prefix(others.count - Self.engineLimit + 1) {
+            other.suspend()
         }
     }
 
@@ -289,6 +351,7 @@ final class LinkCenter {
         }
         if !added.isEmpty { sessions += added }
         for session in added {
+            session.willStartEngine = { [weak self] in self?.makeRoom(for: $0) }
             session.prepare(using: account, workerThreads: workerThreads)
         }
         return opened
@@ -345,13 +408,20 @@ final class LinkCenter {
     }
 
     func close(_ session: LinkSession) {
-        session.close()
+        discard(session)
         sessions.removeAll { $0.id == session.id }
     }
 
     func closeAll() {
-        sessions.forEach { $0.close() }
+        sessions.forEach(discard)
         sessions.removeAll()
+    }
+
+    /// A link that you close. Not at quit: the caches of open links stay for the next run.
+    private func discard(_ session: LinkSession) {
+        session.close()
+        if session.engine == nil { session.removeCache() }
+        recent.removeAll { $0 == session.id }
     }
 
     func session(_ id: UUID) -> LinkSession? {

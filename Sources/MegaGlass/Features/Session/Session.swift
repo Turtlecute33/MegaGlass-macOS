@@ -158,6 +158,9 @@ final class Session {
     @ObservationIgnored let engine: MegaEngine
     @ObservationIgnored var onSignedIn: (() -> Void)?
     @ObservationIgnored var onSignedOut: (() -> Void)?
+    /// MEGA ended the session: the login screen with the reason must show, also when the
+    /// app runs with no window.
+    @ObservationIgnored var onSessionEnded: (() -> Void)?
 
     private var sdk: MEGASdk { engine.sdk }
 
@@ -313,6 +316,7 @@ final class Session {
             startupMessage = message ?? "MEGA could not be reached. You are logged out on this Mac, but the session stays active on the server until it expires. To end it now, close it in MEGA on the web (Settings > Security > Session history)."
         }
         leaveAccount()
+        if message != nil { onSessionEnded?() }
     }
 
     /// Stops a login or an account load that does not finish (for example with no

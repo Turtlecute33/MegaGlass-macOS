@@ -21,3 +21,13 @@ if(NOT PORT STREQUAL "openssl")
     string(APPEND VCPKG_C_FLAGS " -fmacro-prefix-map=${_megaglass_root}/=")
     string(APPEND VCPKG_CXX_FLAGS " -fmacro-prefix-map=${_megaglass_root}/=")
 endif()
+
+# HTTP and WebSocket only. The curl port has no switch for this, and the SDK does not limit the
+# protocols of a URL. vcpkg_cmake_configure adds these options after the options of the port.
+if(PORT STREQUAL "curl")
+    set(VCPKG_CMAKE_CONFIGURE_OPTIONS
+        -DCURL_DISABLE_DICT=ON -DCURL_DISABLE_FILE=ON -DCURL_DISABLE_FTP=ON
+        -DCURL_DISABLE_GOPHER=ON -DCURL_DISABLE_IMAP=ON -DCURL_DISABLE_IPFS=ON
+        -DCURL_DISABLE_MQTT=ON -DCURL_DISABLE_POP3=ON -DCURL_DISABLE_RTSP=ON
+        -DCURL_DISABLE_SMTP=ON -DCURL_DISABLE_TELNET=ON -DCURL_DISABLE_TFTP=ON)
+endif()

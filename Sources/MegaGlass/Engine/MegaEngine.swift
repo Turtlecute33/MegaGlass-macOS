@@ -127,11 +127,16 @@ nonisolated private final class EngineEvents: NSObject, MEGAGlobalDelegate, MEGA
     var deliver: (@Sendable (EngineEvent) -> Void)?
 
     func onRequestFinish(_ api: MEGASdk, request: MEGARequest, error: MEGAError) {
-        // When MEGA ends the session (closed on the web, or the account is blocked) with no
-        // request waiting, the engine logs out by itself: that logout finishes with no error.
-        let loggedOutByEngine = request.type == .MEGARequestTypeLogout
-            && [MEGAErrorType.apiESid.rawValue, MEGAErrorType.apiEBlocked.rawValue].contains(request.paramType)
-        if error.type == .apiESid || loggedOutByEngine { deliver?(.sessionExpired(nil)) }
+        // When a request fails in a way that ends the session (closed on the web, the account
+        // is blocked, a server that fails the key check), the engine logs out by itself on this
+        // Mac. That logout has the error code as its type and finishes with no error; the
+        // logouts of the app have type 0.
+        let loggedOutByEngine = request.type == .MEGARequestTypeLogout && request.paramType != 0 && error.type == .apiOk
+        if loggedOutByEngine, request.paramType == MEGAErrorType.apiESSL.rawValue {
+            deliver?(.sessionExpired("MegaGlass could not verify the MEGA server. A network or security app may inspect HTTPS. You are logged out on this Mac."))
+        } else if error.type == .apiESid || loggedOutByEngine {
+            deliver?(.sessionExpired(nil))
+        }
     }
 
     func onEvent(_ api: MEGASdk, event: MEGAEvent) {

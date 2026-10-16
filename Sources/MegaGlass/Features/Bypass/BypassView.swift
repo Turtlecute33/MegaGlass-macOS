@@ -123,8 +123,11 @@ struct BypassView: View {
                         Text(center.provider?.name ?? "Bypass").font(.headline)
                         Text(job.status.text).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                         if let host = center.browser?.host {
-                            Text("Web page of \(host), not MEGA. Do not type your MEGA password here.")
+                            // The warning first: a long host is cut in the middle.
+                            Text("This page is not MEGA. Do not type your MEGA password here.")
                                 .font(.caption).foregroundStyle(.orange).lineLimit(2)
+                            Text("Web page of \(host)")
+                                .font(.caption).foregroundStyle(.orange).lineLimit(1).truncationMode(.middle)
                         }
                     }
                     Spacer()

@@ -204,8 +204,9 @@ nonisolated final class ThumbnailStore: @unchecked Sendable {
         }
     }
 
-    /// The image types that MEGA apps write for thumbnails and previews.
-    static let attributeTypes: Set<String> = [UTType.jpeg.identifier, UTType.png.identifier, UTType.webP.identifier]
+    /// The image types that MEGA apps write for thumbnails and previews: JPEG or PNG (the SDK
+    /// and MGGfxProcessor write only these).
+    static let attributeTypes: Set<String> = [UTType.jpeg.identifier, UTType.png.identifier]
 
     /// The uploader of a file sets its thumbnail and preview, so these files can come from
     /// anybody. Only the types that MEGA apps write are decoded, and the size is checked

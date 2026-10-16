@@ -7,7 +7,7 @@ import WebKit
 enum AdBlocker {
     /// A new list needs a new identifier.
     private static let identifier = "megaglass-ads-1"
-    private static let localIdentifier = "megaglass-local-1"
+    private static let localIdentifier = "megaglass-local-2"
     private static var compiled: WKContentRuleList?
     /// The rules for the addresses of this Mac and the local network, once compiled. The
     /// Bypass web views always have them: they also block the requests of a page (scripts,
@@ -35,8 +35,8 @@ enum AdBlocker {
     /// Hosts of this Mac and of the local network, as WebKit writes them (numbers in the
     /// dotted form, IPv6 in short form). WebKit rules have no "|": one rule for each form.
     static let localHosts = [
-        // Names with no dot (localhost, router), and local name suffixes
-        #"[^\[:/.]+"#, #"localhost\."#, #"[^:/]+\.local\.?"#, #"[^:/]+\.localhost\.?"#, #"[^:/]+\.internal\.?"#,
+        // Names with no dot (localhost, router, router.), and local name suffixes
+        #"[^\[:/.@]+\.?"#, #"localhost\."#, #"[^:/]+\.local\.?"#, #"[^:/]+\.localhost\.?"#, #"[^:/]+\.internal\.?"#,
         #"[^:/]+\.lan\.?"#, #"[^:/]+\.home\.arpa\.?"#, #"[^:/]+\.localdomain\.?"#,
         // IPv4: this network, loopback, private, link-local, shared (CGNAT)
         #"0\.[0-9.]+"#, #"127\.[0-9.]+"#, #"10\.[0-9.]+"#, #"192\.168\.[0-9.]+"#, #"169\.254\.[0-9.]+"#,
@@ -47,8 +47,9 @@ enum AdBlocker {
     ]
 
     static var localRuleJSON: String {
+        // WebKit matches the whole address, also a user name and password before the host.
         let rules: [[String: Any]] = localHosts.map { host in
-            ["trigger": ["url-filter": "^[^:]+://+" + host + "[:/]"], "action": ["type": "block"]]
+            ["trigger": ["url-filter": "^[^:]+://+([^/@]*@)?" + host + "[:/]"], "action": ["type": "block"]]
         }
         let data = (try? JSONSerialization.data(withJSONObject: rules)) ?? Data("[]".utf8)
         return String(decoding: data, as: UTF8.self)

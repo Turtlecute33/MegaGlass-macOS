@@ -53,6 +53,13 @@ struct LinkDetailView: View {
     @Environment(AppModel.self) private var app
 
     var body: some View {
+        content
+            // The engines of the links selected least recently stop first.
+            .task(id: session.id) { app.links.select(session) }
+    }
+
+    @ViewBuilder
+    private var content: some View {
         switch session.state {
         case .idle, .opening:
             VStack(spacing: 12) {

@@ -9,7 +9,8 @@ nonisolated enum LocalFileSafety {
         var scalars = String.UnicodeScalarView()
         for scalar in name.unicodeScalars {
             switch scalar.value {
-            case 0x061C, 0x200B...0x200F, 0x202A...0x202E, 0x2060...0x2069, 0xFEFF: continue
+            // Not U+200C and U+200D: emoji sequences and many scripts need them.
+            case 0x061C, 0x200B, 0x200E, 0x200F, 0x202A...0x202E, 0x2060...0x2069, 0xFEFF: continue
             case 0x00...0x1F, 0x7F...0x9F, 0x2028, 0x2029: scalars.append("\u{FFFD}")
             default: scalars.append(scalar)
             }
@@ -31,9 +32,12 @@ nonisolated enum LocalFileSafety {
     /// " (2)" that the SDK adds when the name is already in use.
     private static func shortened(_ name: String, limit: Int = 240) -> String {
         func size(_ text: String) -> (bytes: Int, units: Int) {
-            (text.utf8.count, text.decomposedStringWithCanonicalMapping.utf16.count)
+            // On exFAT, FAT, NTFS and network disks, the SDK writes each of these as "%xx".
+            let escaped = 2 * text.unicodeScalars.count(where: { #"\?"<>|*"#.unicodeScalars.contains($0) })
+            return (text.utf8.count + escaped, text.decomposedStringWithCanonicalMapping.utf16.count + escaped)
         }
-        guard name.utf8.count > limit || size(name).units > limit else { return name }
+        let total = size(name)
+        guard total.bytes > limit || total.units > limit else { return name }
         let ext = (name as NSString).pathExtension
         let suffix = ext.isEmpty || ext.utf8.count > 16 ? "" : "." + ext
         var used = size(suffix)

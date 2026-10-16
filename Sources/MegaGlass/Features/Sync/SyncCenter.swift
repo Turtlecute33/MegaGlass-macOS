@@ -108,7 +108,7 @@ final class SyncCenter {
     }
 
     static func describe(_ sync: MGSyncInfo, stats: MGSyncStats?) -> String {
-        if sync.error != 0 { return sync.errorDescription }
+        if sync.error != 0 { return describeError(sync.error, fallback: sync.errorDescription) }
         switch sync.runState {
         case .pending, .loading: return "Starting"
         case .suspended: return "Paused"
@@ -124,6 +124,16 @@ final class SyncCenter {
             return parts.isEmpty ? "Syncing" : "Syncing · " + parts.joined(separator: ", ")
         }
         return "Up to date"
+    }
+
+    /// Text for a SyncError code that needs a step from the user, else the SDK text.
+    static func describeError(_ code: Int, fallback: String) -> String {
+        switch code {
+        case 7: return "The folder is not available. Connect the disk or check the network."
+        case 15: return "This folder is now on a different disk. Remove this sync and add it again to use the new disk."
+        case 44: return "This folder was replaced by a different folder. Remove this sync and add it again."
+        default: return fallback
+        }
     }
 
     /// Why a folder cannot be the folder on this Mac of a sync or backup, or nil if it can.
@@ -150,8 +160,11 @@ final class SyncCenter {
         }
         let system = ["/System", "/Library", "/Applications", "/bin", "/sbin", "/usr", "/private", "/dev", "/cores", "/opt"]
             .map { key(URL(filePath: $0)) } + [home + "/library"]
+        // iCloud Drive and the folders of cloud apps (Dropbox, OneDrive, Google Drive) hold documents.
+        let isCloudFolder = isInside(path, home + "/library/mobile documents/com~apple~clouddocs")
+            || path.hasPrefix(home + "/library/cloudstorage/")
         // A folder that holds the home folder ("/", "/Users") counts as a system folder.
-        if isInside(home, path) || path == key(URL(filePath: "/Volumes")) || system.contains(where: { isInside(path, $0) }) {
+        if !isCloudFolder, isInside(home, path) || path == key(URL(filePath: "/Volumes")) || system.contains(where: { isInside(path, $0) }) {
             return "This is a system folder. Choose a folder in your home folder, such as Documents."
         }
         if appFolders.map(key).contains(where: { isInside(path, $0) || isInside($0, path) }) {

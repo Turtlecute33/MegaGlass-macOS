@@ -48,6 +48,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     override init() {
         // Before the model: it starts the engine and cleans the caches.
         InstanceLock.acquireOrQuit()
+        Self.raiseFileLimit()
         app = AppModel()
         super.init()
     }
@@ -78,7 +79,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 forward.append(url)
             }
         }
-        if !incoming.isEmpty || empty { app.handleIncoming(incoming, source: .scheme) }
+        if !incoming.isEmpty || empty { app.receiveFromOtherApp(incoming) }
         BrowserRouter.forward(forward, settings: app.settings)
     }
 
@@ -107,6 +108,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         app.shutdown()
     }
 
+    /// Each engine (the account and each open folder link) keeps files and connections open:
+    /// the soft limit of 256 is too low. The SDK waits with poll(), which has no FD_SETSIZE limit.
+    private static func raiseFileLimit() {
+        var limit = rlimit()
+        guard getrlimit(RLIMIT_NOFILE, &limit) == 0 else { return }
+        let wanted = min(limit.rlim_max, 4096)
+        guard limit.rlim_cur < wanted else { return }
+        limit.rlim_cur = wanted
+        setrlimit(RLIMIT_NOFILE, &limit)
+    }
 }
 
 /// One MegaGlass at a time. A second copy (another path, or `open -n`) would run a second

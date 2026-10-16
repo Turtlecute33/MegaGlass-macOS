@@ -16,7 +16,7 @@ SIGNED=1 ./scripts/build-app.sh
 dmg=build/MegaGlass-macos-$version.dmg
 stage=$(mktemp -d)/MegaGlass
 mkdir -p $stage
-ditto build/MegaGlass.app $stage/MegaGlass.app
+ditto build/app.noindex/MegaGlass.app $stage/MegaGlass.app
 ln -s /Applications $stage/Applications
 rm -f $dmg
 hdiutil create -quiet -volname MegaGlass -srcfolder $stage -fs APFS -format ULFO -ov $dmg

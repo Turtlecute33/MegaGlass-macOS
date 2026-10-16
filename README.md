@@ -54,7 +54,7 @@ Requirements: Apple Silicon, macOS 26 or later, Command Line Tools, Homebrew wit
 ```zsh
 ./scripts/bootstrap.sh    # MEGA SDK (pinned), patches, ICU headers, desktop config.h
 ./scripts/build-deps.sh   # curl, Crypto++, libsodium, libuv from source (vcpkg, about 5 min)
-./scripts/build-app.sh    # build/MegaGlass.app (add --install to copy it to /Applications)
+./scripts/build-app.sh    # build/app.noindex/MegaGlass.app (add --install to copy it to /Applications)
 ```
 
 Engine check without the UI (crypto speed, 100 MB public test download, folder link):

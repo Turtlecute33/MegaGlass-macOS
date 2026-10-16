@@ -1,5 +1,5 @@
 #!/bin/zsh
-# Builds build/MegaGlass.app (release, Apple Silicon) and signs it ad hoc.
+# Builds build/app.noindex/MegaGlass.app (release, Apple Silicon) and signs it ad hoc.
 set -euo pipefail
 
 ROOT="${0:A:h:h}"
@@ -21,7 +21,9 @@ if [[ ! -f Resources/AppIcon.icns ]]; then
   swift scripts/make-icon.swift Resources/AppIcon.icns
 fi
 
-APP="$ROOT/build/MegaGlass.app"
+# Spotlight does not index a folder whose name ends in .noindex. Without it, Spotlight shows
+# the build copy as a second MegaGlass and registers it again with LaunchServices.
+APP="$ROOT/build/app.noindex/MegaGlass.app"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/MegaGlass"

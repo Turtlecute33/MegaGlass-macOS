@@ -1,7 +1,7 @@
 #!/bin/zsh
-# Points the Homebrew cask (github.com/Turtlecute33/homebrew-tap) to a published release, and
-# makes the cask at the first release. release.zsh runs it; run it by hand only when the disk
-# image of <version> is already on GitHub.
+# Points the Homebrew cask (github.com/Turtlecute33/homebrew-tap) to a published release. It
+# writes the whole cask from the template below each time, so a change here reaches the tap.
+# release.zsh runs it; run it by hand only when the disk image of <version> is already on GitHub.
 #   ./scripts/update-tap.zsh 0.1.0
 set -euo pipefail
 version=${1:?usage: ./scripts/update-tap.zsh <version>}
@@ -15,8 +15,8 @@ sha=$(shasum -a 256 $tmp/$dmg | cut -d' ' -f1)
 
 gh repo clone Turtlecute33/homebrew-tap $tmp/tap -- --quiet --depth 1
 cask=$tmp/tap/Casks/megaglass.rb
-if [[ ! -f $cask ]]; then
-  cat > $cask <<'CASK'
+mkdir -p ${cask:h}
+cat > $cask <<'CASK'
 cask "megaglass" do
   version ""
   sha256 ""
@@ -36,17 +36,26 @@ cask "megaglass" do
 
   app "MegaGlass.app"
 
-  zap trash: [
-    "~/Library/Application Support/MegaGlass",
-    "~/Library/Caches/app.megaglass.MegaGlass",
-    "~/Library/HTTPStorages/app.megaglass.MegaGlass",
-    "~/Library/Preferences/app.megaglass.MegaGlass.plist",
-    "~/Library/Saved Application State/app.megaglass.MegaGlass.savedState",
-    "~/Library/WebKit/app.megaglass.MegaGlass",
-  ]
+  # The script deletes the session token and the Bypass API keys from the login Keychain.
+  zap script: {
+        executable:   "/bin/sh",
+        args:         [
+          "-c",
+          "for s in app.megaglass.session app.megaglass.bypass; do " \
+          "while /usr/bin/security delete-generic-password -s $s >/dev/null 2>&1; do :; done; done",
+        ],
+        must_succeed: false,
+      },
+      trash:  [
+        "~/Library/Application Support/MegaGlass",
+        "~/Library/Caches/app.megaglass.MegaGlass",
+        "~/Library/HTTPStorages/app.megaglass.MegaGlass",
+        "~/Library/Preferences/app.megaglass.MegaGlass.plist",
+        "~/Library/Saved Application State/app.megaglass.MegaGlass.savedState",
+        "~/Library/WebKit/app.megaglass.MegaGlass",
+      ]
 end
 CASK
-fi
 sed -i '' -e "s/^  version \".*\"/  version \"$version\"/" -e "s/^  sha256 \".*\"/  sha256 \"$sha\"/" $cask
 git -C $tmp/tap add Casks/megaglass.rb
 if git -C $tmp/tap diff --cached --quiet; then

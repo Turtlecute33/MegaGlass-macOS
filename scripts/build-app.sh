@@ -33,6 +33,8 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/MegaGlass"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
+cp LICENSE "$APP/Contents/Resources/LICENSE.txt"
+cp Resources/ThirdPartyNotices.txt "$APP/Contents/Resources/ThirdPartyNotices.txt"
 strip -x "$APP/Contents/MacOS/MegaGlass"
 
 # Signing, in this order:
@@ -40,12 +42,14 @@ strip -x "$APP/Contents/MacOS/MegaGlass"
 #    of `xcrun notarytool store-credentials`) for a notarized app.
 #  - The stable self-signed identity of scripts/make-signing-identity.zsh, when it exists: the
 #    same identity in every release keeps the Gatekeeper approval and the Keychain access after
-#    updates. SIGNED=1 requires it (releases).
+#    updates. SIGNED=1 requires it (releases). macOS asks before it gives the keychain password
+#    to this script: click Allow, not Always Allow. The keychain locks again when the script ends.
 #  - Else ad hoc: Gatekeeper blocks a downloaded copy, and macOS asks again for Keychain access
 #    after each build.
 IDENTITY="${MEGAGLASS_SIGN_IDENTITY:--}"
 SIGNING="$HOME/.config/megaglass/macos-signing.keychain-db"
 if [[ "$IDENTITY" == "-" && -f "$SIGNING" ]]; then
+  trap 'security lock-keychain "$SIGNING"' EXIT
   security unlock-keychain -p "$(security find-generic-password -s megaglass-macos-signing -a keychain -w)" "$SIGNING"
   codesign --force --options runtime --timestamp=none --sign MegaGlass --keychain "$SIGNING" "$APP"
   codesign --verify --strict "$APP"

@@ -12,12 +12,15 @@ plist=$(plutil -extract CFBundleShortVersionString raw Resources/Info.plist)
 
 SIGNED=1 ./scripts/build-app.sh
 
-# A disk image with a link to /Applications: users install by dragging.
+# A disk image with a link to /Applications: users install by dragging. The licenses are also
+# in the app (Contents/Resources).
 dmg=build/MegaGlass-macos-$version.dmg
 stage=$(mktemp -d)/MegaGlass
 mkdir -p $stage
 ditto build/app.noindex/MegaGlass.app $stage/MegaGlass.app
 ln -s /Applications $stage/Applications
+cp LICENSE $stage/LICENSE.txt
+cp Resources/ThirdPartyNotices.txt $stage/ThirdPartyNotices.txt
 rm -f $dmg
 hdiutil create -quiet -volname MegaGlass -srcfolder $stage -fs APFS -format ULFO -ov $dmg
 rm -rf ${stage:h}

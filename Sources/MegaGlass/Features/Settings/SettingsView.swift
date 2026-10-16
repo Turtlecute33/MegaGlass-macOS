@@ -56,6 +56,21 @@ private struct GeneralSettings: View {
             Text("Syncs and transfers keep running when you close the window while the app is in the menu bar.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+            Section {
+                LabeledContent("License") {
+                    HStack {
+                        Text("GNU GPL 3.0")
+                        if let license = Bundle.main.url(forResource: "LICENSE", withExtension: "txt") {
+                            Button("Show") { NSWorkspace.shared.open(license) }
+                        }
+                    }
+                }
+                if let notices = Bundle.main.url(forResource: "ThirdPartyNotices", withExtension: "txt") {
+                    LabeledContent("Third-party software") {
+                        Button("Show Notices") { NSWorkspace.shared.open(notices) }
+                    }
+                }
+            }
         }
     }
 }

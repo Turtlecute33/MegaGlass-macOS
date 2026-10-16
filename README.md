@@ -46,6 +46,11 @@ it. Click Done, then System Settings → Privacy & Security → Open Anyway. All
 same signing identity, so Homebrew keeps this approval, and the app keeps its Keychain access,
 after an update. The Android app is [MegaGlass-Android](https://github.com/Turtlecute33/MegaGlass-Android).
 
+To remove the app and all its data: log out in MegaGlass first (an uninstall does not end the
+session on the MEGA server), then run `brew uninstall --zap --cask megaglass`. This also deletes
+the session token and the Bypass API keys from the login Keychain. Without Homebrew, delete the
+items `app.megaglass.session` and `app.megaglass.bypass` in Keychain Access.
+
 ## Build
 
 Requirements: Apple Silicon, macOS 26 or later, Command Line Tools, Homebrew with
@@ -135,7 +140,9 @@ screenshot driver are separate tools; the screenshot driver uses a saved account
   the GitHub release, and `scripts/update-tap.zsh` points the cask in
   [homebrew-tap](https://github.com/Turtlecute33/homebrew-tap) to it.
 - Signing: `scripts/make-signing-identity.zsh` (once) makes the stable self-signed identity
-  that `build-app.sh` uses; back up `~/.config/megaglass/macos-signing.keychain-db`. For a
+  that `build-app.sh` uses; back up `~/.config/megaglass/macos-signing.keychain-db`. macOS asks
+  before `build-app.sh` reads the keychain password (click Allow, not Always Allow), and the
+  signing keychain locks again after the build. For a
   notarized app, set `MEGAGLASS_SIGN_IDENTITY` (a Developer ID Application identity) and
   `MEGAGLASS_NOTARY_PROFILE` (a `notarytool store-credentials` profile).
 - With no identity, the app is signed ad hoc. After each rebuild, macOS can ask once for
@@ -154,4 +161,9 @@ screenshot driver are separate tools; the screenshot driver uses a saved account
 | `patches/` | SDK patches: logout signature with sync on; sync safety (failed folder listings, changed volumes); local names in folder downloads |
 | `scripts/` | Bootstrap, dependency build, app build, icon, signing identity, release, tap |
 
-Built on the MEGA SDK (BSD 2-Clause).
+## License
+
+MegaGlass is free software under the GNU General Public License, version 3 ([LICENSE](LICENSE)).
+It is built on the MEGA SDK (BSD 2-Clause) and other open-source libraries. Their licenses are in
+[Resources/ThirdPartyNotices.txt](Resources/ThirdPartyNotices.txt); the app (Settings > General)
+and the disk image include it.

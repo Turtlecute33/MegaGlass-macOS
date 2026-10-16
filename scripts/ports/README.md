@@ -16,6 +16,8 @@ which OpenSSL supports.
 
 `scripts/build-deps.sh` puts these ports before the SDK ports, checks the installed versions,
 and rebuilds when a port changes. These are pinned versions: they do not update by themselves.
+When a version or a library changes, update `Resources/ThirdPartyNotices.txt` (the license texts
+are in `Vendor/vcpkg/installed/arm64-osx-megaglass/share/<port>/copyright`).
 
 Sources: [vcpkg revision](https://github.com/microsoft/vcpkg/tree/357b1a6f8343064ca982a20771e420fcecfe7efc/ports),
 [curl advisories](https://curl.se/docs/vuln-8.14.1.html),

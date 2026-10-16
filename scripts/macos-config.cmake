@@ -14,4 +14,7 @@ set(USE_SQLITE 1)
 set(USE_SODIUM 1)
 set(USE_CRYPTOPP 1)
 set(USE_PTHREAD 1)
+# USE_OPENSSL stays off, as in the SDK CMake build for Apple. curl does the TLS (with OpenSSL)
+# and pins the API key with CURLOPT_PINNEDPUBLICKEY. USE_OPENSSL would also turn on the HTTPS
+# local server (third_party/evt-tls), which Package.swift leaves out.
 configure_file("${SDK_DIR}/cmake/config.h.in" "${OUT_DIR}/mega/config.h")

@@ -19,6 +19,8 @@ let sdkDefines: [CXXSetting] = [
     .define("ENABLE_CHAT"),
     .define("HAVE_LIBUV"),
     .define("NDEBUG", .when(configuration: .release)),
+    // The SDK log macros put __FILE__ in the binary: no build-machine path in it.
+    .unsafeFlags(["-fmacro-prefix-map=" + Context.packageDirectory + "/="]),
 ]
 
 // Static libraries built from source by scripts/build-deps.sh.
@@ -82,6 +84,8 @@ let package = Package(
                 .unsafeFlags(["-L" + depsLib]),
                 .linkedLibrary("cryptopp"),
                 .linkedLibrary("curl"),
+                .linkedLibrary("ssl"),
+                .linkedLibrary("crypto"),
                 .linkedLibrary("sodium"),
                 .linkedLibrary("uv"),
                 .linkedLibrary("zstd"),

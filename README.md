@@ -53,9 +53,12 @@ Requirements: Apple Silicon, macOS 26 or later, Command Line Tools, Homebrew wit
 
 ```zsh
 ./scripts/bootstrap.sh    # MEGA SDK (pinned), patches, ICU headers, desktop config.h
-./scripts/build-deps.sh   # curl, Crypto++, libsodium, libuv from source (vcpkg, about 5 min)
+./scripts/build-deps.sh   # curl, OpenSSL, Crypto++, libsodium, libuv from source (vcpkg, a few min)
 ./scripts/build-app.sh    # build/app.noindex/MegaGlass.app (add --install to copy it to /Applications)
 ```
+
+`build-app.sh` runs the first two scripts again. They do nothing when `Vendor/` already has
+the pinned SDK commit, the patches and the pinned dependencies, and update it when not.
 
 Engine check without the UI (crypto speed, 100 MB public test download, folder link):
 
@@ -110,7 +113,9 @@ screenshot driver are separate tools; the screenshot driver uses a saved account
   preview is released; crash/termination leftovers are cleared at the next launch.
   Logout retires account thumbnails after pending SDK writes finish.
 - Dependencies are built from source at pinned versions, not from MEGA's prebuilt
-  binaries (those have curl 8.1.2 and libsodium 1.0.16).
+  binaries (those have curl 8.1.2 and libsodium 1.0.16). curl 8.23.0 uses OpenSSL 3.6.5 for
+  TLS and the macOS trust store for certificates. The pins do not update by themselves; see
+  [scripts/ports](scripts/ports/README.md).
 
 ## Notes
 

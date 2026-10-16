@@ -5,8 +5,10 @@ set -euo pipefail
 ROOT="${0:A:h:h}"
 cd "$ROOT"
 
-if [[ ! -f Vendor/config/mega/config.h ]]; then ./scripts/bootstrap.sh; fi
-if [[ ! -f Vendor/deps/lib/libcurl.a ]]; then ./scripts/build-deps.sh; fi
+# Vendor/ is not in git. These bring it to the pins of this checkout (SDK commit, patches,
+# dependency versions), and do nothing when it already matches.
+./scripts/bootstrap.sh
+./scripts/build-deps.sh
 
 # The macOS 27 SDK declares @State as a macro whose plugin ships only with Xcode.
 # The 26.5 SDK (in the Command Line Tools) has all the Liquid Glass APIs.
@@ -14,8 +16,10 @@ if [[ -d /Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk ]] && ! xcode-s
   export SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk
 fi
 
-swift build -c release
 BIN="$(swift build -c release --show-bin-path)/MegaGlass"
+# SwiftPM does not see a change in the static libraries of Vendor/deps: link again after one.
+if [[ Vendor/deps/PINS -nt "$BIN" ]]; then rm -f "$BIN"; fi
+swift build -c release
 
 if [[ ! -f Resources/AppIcon.icns ]]; then
   swift scripts/make-icon.swift Resources/AppIcon.icns

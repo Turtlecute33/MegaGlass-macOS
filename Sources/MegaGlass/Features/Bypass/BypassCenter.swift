@@ -77,7 +77,7 @@ nonisolated struct BypassProvider: Identifiable, Hashable, Sendable {
         api("rip.linkvertise.lol", "rip.linkvertise.lol",
             BypassAPI(method: .get, endpoint: "https://trw.lat/api/bypass?url={url}&mode=stream", keyHeader: nil, bearer: false,
                       headers: ["Origin": "https://rip.linkvertise.lol", "Referer": "https://rip.linkvertise.lol/"]),
-            "Free API, no key.", timeout: 40),
+            "Free API, no key. The link goes to its API host, trw.lat.", timeout: 40),
         api("bypasskit", "BypassKit",
             BypassAPI(method: .postJSON, endpoint: "https://bypasskit.co/api/bypass", keyHeader: nil, bearer: false,
                       headers: ["Origin": "https://bypasskit.co", "Referer": "https://bypasskit.co/"]),
@@ -199,6 +199,8 @@ final class BypassCenter {
     @ObservationIgnored private let session: URLSession
     /// Tests: keys without the Keychain.
     @ObservationIgnored private let keyLookup: ((String) -> String?)?
+    /// The API keys read so far (nil: the service has no key).
+    @ObservationIgnored private var keys: [String: String?] = [:]
     /// Tests: no web views (no page services, no result pages, no step 2).
     @ObservationIgnored private let usesWebViews: Bool
     @ObservationIgnored private var adRules: WKContentRuleList?
@@ -206,7 +208,7 @@ final class BypassCenter {
     private static let keychainService = "app.megaglass.bypass"
 
     /// Hosts that are never a bypass result (ads, captchas, social links of the services).
-    private static let ignoredHosts: Set<String> = [
+    private nonisolated static let ignoredHosts: Set<String> = [
         "google.com", "googlesyndication.com", "doubleclick.net", "googleadservices.com", "gstatic.com",
         "googleapis.com", "googletagmanager.com", "google-analytics.com", "cloudflare.com", "hcaptcha.com",
         "recaptcha.net", "discord.gg", "discord.com", "t.me", "telegram.me", "twitter.com", "x.com",
@@ -228,6 +230,7 @@ final class BypassCenter {
         session = URLSession(configuration: configuration)
         if usesWebViews {
             Task {
+                _ = await AdBlocker.loadLocalRules()
                 adRules = await AdBlocker.rules()
                 applyAdBlocking()
             }
@@ -236,7 +239,7 @@ final class BypassCenter {
 
     // MARK: Web views
 
-    /// A new web view, with the ad rules when they are on.
+    /// A new web view, with the local-address rules, and the ad rules when they are on.
     private func makeBrowser() -> BypassBrowser {
         let made = BypassBrowser()
         made.blockAds(settings.bypassBlockAds ? adRules : nil)
@@ -287,14 +290,21 @@ final class BypassCenter {
         settings.bypassOrder = order
     }
 
+    /// The key from memory: the Keychain is read once for each service, because the view
+    /// asks on each change of a job. A refused read counts as no key.
     func key(for provider: BypassProvider) -> String? {
-        try? loadKey(for: provider)
+        if let known = keys[provider.id] { return known }
+        let key = try? loadKey(for: provider)
+        keys.updateValue(key, forKey: provider.id)
+        return key
     }
 
-    /// Throws when the Keychain refuses the read; nil when there is no key.
+    /// Reads the Keychain. Throws when the Keychain refuses the read; nil when there is no key.
     func loadKey(for provider: BypassProvider) throws -> String? {
         if let keyLookup { return keyLookup(provider.id) }
-        return try Keychain.load(account: provider.id, service: Self.keychainService)
+        let key = try Keychain.load(account: provider.id, service: Self.keychainService)
+        keys.updateValue(key, forKey: provider.id)
+        return key
     }
 
     @discardableResult
@@ -302,11 +312,14 @@ final class BypassCenter {
         do {
             if let key, !key.isEmpty {
                 try Keychain.save(key, account: provider.id, service: Self.keychainService)
+                keys.updateValue(key, forKey: provider.id)
             } else {
                 try Keychain.delete(account: provider.id, service: Self.keychainService)
+                keys.updateValue(nil, forKey: provider.id)
             }
             return true
         } catch {
+            keys.removeValue(forKey: provider.id)
             onError?(error, key?.isEmpty == false ? "The API key was not saved" : "The API key was not removed")
             return false
         }
@@ -397,14 +410,25 @@ final class BypassCenter {
             links = await withYou(job, assist: assist)
             job.releaseBrowser()
         }
+        let found = await Self.validLinks(links)
         guard !Task.isCancelled else {
             // A step can set a status after the stop.
             job.status = .failed("Stopped")
             return
         }
+        if found.count > LinkCenter.openLimit {
+            job.attempts.append("\(found.count) MEGA links: only the first \(LinkCenter.openLimit) are kept")
+        }
+        links = Array(found.prefix(LinkCenter.openLimit))
         job.megaLinks = links
         job.status = links.isEmpty ? .failed(Self.failureText(for: job.link)) : .done(links.count)
         if !links.isEmpty, settings.bypassAutoOpen { openLinks(of: job) }
+    }
+
+    /// Only real MEGA links, each once: a page scan gives what the page has. Off the main
+    /// thread: a page can have many.
+    @concurrent nonisolated static func validLinks(_ links: [String]) async -> [String] {
+        LinkParser.links(in: links.joined(separator: "\n")).map(\.0)
     }
 
     // MARK: Panel
@@ -486,6 +510,12 @@ final class BypassCenter {
 
     private func automatic(_ link: String, job: BypassJob, depth: Int, assist: inout [BypassProvider]) async -> [String] {
         guard let original = URL(string: link), job.visit(original) else { return [] }
+        // A MEGA link in the address itself (percent-encoded or in Base64) needs no request.
+        let direct = MegaLinkFinder.links(in: link)
+        if !direct.isEmpty {
+            job.attempts.append("MEGA link in the address")
+            return direct
+        }
         var link = link
         // The app first reads the link itself: short links, mirror domains and pastes need no service.
         let local = await readLocally(original, job: job, depth: depth, assist: &assist)
@@ -680,24 +710,28 @@ final class BypassCenter {
                   final.host() != url.host(), !Task.isCancelled else { break }
             page = await fetchPage(url)
         }
-        guard let (final, status, html) = page else { return LocalRead() }
+        guard let (final, status, html) = page else {
+            job.attempts.append("\(url.host() ?? "The link"): the app could not read the page")
+            return LocalRead()
+        }
         // A short link that redirects to MEGA: the redirect stops at the MEGA link.
         let redirected = MegaLinkFinder.links(in: final.absoluteString)
         if !redirected.isEmpty {
             job.attempts.append("\(url.host() ?? "The link"): redirects to MEGA")
             return LocalRead(links: redirected)
         }
-        var read = LocalRead(links: MegaLinkFinder.links(in: html),
-                             resolved: final.absoluteString == url.absoluteString ? nil : final,
+        // A locker page has links to its own sites only; look for other lockers in other pages.
+        let protectors = isProtector(final) ? [] : Set(settings.protectorHosts)
+        let found = await Self.readHTML(html, page: final, protectors: protectors)
+        var read = LocalRead(links: found.mega,
+                             resolved: final.absoluteString == PublicAddress.secure(url).absoluteString ? nil : final,
                              gone: status == 404 || status == 410)
         if read.gone { job.attempts.append("\(final.host() ?? "The page"): HTTP \(status), the page is not there") }
         if !read.links.isEmpty {
             job.attempts.append("\(final.host() ?? "The page"): \(read.links.count) MEGA link(s) in the page")
             return read
         }
-        // A locker page has links to its own sites only; look for other lockers in other pages.
-        let protectors = isProtector(final) ? [] : Set(settings.protectorHosts)
-        for next in Self.nextLinks(in: html, page: final, protectors: protectors).prefix(2) {
+        for next in found.next {
             guard !Task.isCancelled else { break }
             job.attempts.append("Next link: \(next.host() ?? next.absoluteString)")
             read.links = await follow(next, job: job, depth: depth + 1, assist: &assist)
@@ -706,33 +740,50 @@ final class BypassCenter {
         return read
     }
 
-    private static let anchorPattern = try! NSRegularExpression(
-        pattern: #"<a\b[^>]*?href\s*=\s*["']([^"']+)["'][^>]*>(.{0,400}?)</a>"#,
-        options: [.caseInsensitive, .dotMatchesLineSeparators])
-    private static let urlPattern = try! NSRegularExpression(pattern: #"https?://[^\s"'<>\\]+"#, options: [.caseInsensitive])
+    /// Off the main thread: a page can be large, and anyone can write its HTML.
+    @concurrent private nonisolated static func readHTML(_ html: String, page: URL,
+                                                         protectors: Set<String>) async -> (mega: [String], next: [URL]) {
+        let mega = MegaLinkFinder.links(in: html)
+        guard mega.isEmpty else { return (mega, []) }
+        return ([], nextLinks(in: html, page: page, protectors: protectors, limit: 2))
+    }
 
-    /// The links of a page that go on to the MEGA links: "Mega link" buttons (a chain of
-    /// pastes), and links to the lockers in `protectors` (a locker in a paste).
-    static func nextLinks(in html: String, page: URL, protectors: Set<String>) -> [URL] {
+    /// An anchor: its attributes and its text. Each part has a limit, and the tag and the
+    /// text stop at the next tag or anchor: the work grows with the page, not faster.
+    private nonisolated static let anchorPattern = try! NSRegularExpression(
+        pattern: #"<a\b([^<>]{0,2048})>((?:[^<]|<(?!a\b)){0,400}?)</a>"#, options: [.caseInsensitive])
+    private nonisolated static let hrefPattern = try! NSRegularExpression(
+        pattern: #"\bhref\s{0,16}=\s{0,16}["']([^"']{1,2048})["']"#, options: [.caseInsensitive])
+    private nonisolated static let urlPattern = try! NSRegularExpression(pattern: #"https?://[^\s"'<>\\]+"#, options: [.caseInsensitive])
+
+    /// The first `limit` links of a page that go on to the MEGA links: "Mega link" buttons
+    /// (a chain of pastes), and links to the lockers in `protectors` (a locker in a paste).
+    nonisolated static func nextLinks(in html: String, page: URL, protectors: Set<String>, limit: Int) -> [URL] {
         var found: [URL] = []
+        var seen = Set<URL>()
         func add(_ url: URL) {
-            if ["http", "https"].contains(url.scheme?.lowercased() ?? ""), url != page, !found.contains(url) { found.append(url) }
+            if ["http", "https"].contains(url.scheme?.lowercased() ?? ""), url != page, seen.insert(url).inserted { found.append(url) }
         }
         let range = NSRange(html.startIndex..., in: html)
-        for match in anchorPattern.matches(in: html, range: range) {
-            guard let href = Range(match.range(at: 1), in: html), let text = Range(match.range(at: 2), in: html),
+        anchorPattern.enumerateMatches(in: html, range: range) { match, _, stop in
+            guard let match, let text = Range(match.range(at: 2), in: html),
                   html[text].range(of: "mega", options: .caseInsensitive) != nil,
+                  let attribute = hrefPattern.firstMatch(in: html, range: match.range(at: 1)),
+                  let href = Range(attribute.range(at: 1), in: html),
                   let url = URL(string: html[href].replacingOccurrences(of: "&amp;", with: "&"), relativeTo: page)?.absoluteURL,
-                  let host = url.host()?.lowercased(), !LinkSorter.isMega(host), !isIgnored(host) else { continue }
+                  let host = url.host()?.lowercased(), !LinkSorter.isMega(host), !isIgnored(host) else { return }
             add(url)
+            if found.count >= limit { stop.pointee = true }
         }
+        guard found.count < limit, !protectors.isEmpty else { return found }
         let pageHost = page.host()?.lowercased()
-        for match in urlPattern.matches(in: html, range: range) where !protectors.isEmpty {
-            guard let span = Range(match.range, in: html),
+        urlPattern.enumerateMatches(in: html, range: range) { match, _, stop in
+            guard let match, let span = Range(match.range, in: html),
                   let url = URL(string: html[span].replacingOccurrences(of: "&amp;", with: "&")),
-                  let host = url.host()?.lowercased(), host != pageHost, url.path().count > 1 else { continue }
+                  let host = url.host()?.lowercased(), host != pageHost, url.path().count > 1 else { return }
             // Locker links are on the domain itself; subdomains are its scripts and pages.
             if protectors.contains(host.hasPrefix("www.") ? String(host.dropFirst(4)) : host) { add(url) }
+            if found.count >= limit { stop.pointee = true }
         }
         return found
     }
@@ -771,7 +822,7 @@ final class BypassCenter {
             let reply = try await withTimeout(seconds: provider.timeout) { [session] in
                 try await Self.readReply(session: session, request: finished, delegate: redirects)
             }
-            return Self.outcome(from: reply)
+            return await Self.outcome(from: reply)
         } catch is TimeoutError {
             return .failed("No answer in time")
         } catch {
@@ -788,16 +839,23 @@ final class BypassCenter {
         let type = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Type") ?? ""
         if type.contains("event-stream") {
             var last = APIReply(status: status)
+            // Byte by byte: a line with no end counts toward the limit too.
+            var line = Data()
             var received = 0
-            for try await line in bytes.lines {
-                received += line.utf8.count
+            for try await byte in bytes {
+                received += 1
                 guard received <= 4_000_000 else { throw URLError(.dataLengthExceedsMaximum) }
-                guard line.hasPrefix("data:"), let data = line.dropFirst(5).trimmingCharacters(in: .whitespaces).data(using: .utf8),
-                      let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
-                last = APIReply(status: status, object: object)
-                if last.isFinal { return last }
+                guard byte == UInt8(ascii: "\n") else {
+                    line.append(byte)
+                    continue
+                }
+                if let reply = event(in: line, status: status) {
+                    last = reply
+                    if last.isFinal { return last }
+                }
+                line.removeAll(keepingCapacity: true)
             }
-            return last
+            return event(in: line, status: status) ?? last
         }
         var data = Data()
         for try await byte in bytes {
@@ -806,6 +864,14 @@ final class BypassCenter {
         }
         let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
         return APIReply(status: status, object: object ?? [:], text: String(data: data, encoding: .utf8))
+    }
+
+    /// The JSON of a "data: {...}" line of an event stream.
+    private nonisolated static func event(in line: Data, status: Int) -> APIReply? {
+        guard let text = String(data: line, encoding: .utf8), text.hasPrefix("data:"),
+              let data = text.dropFirst(5).trimmingCharacters(in: .whitespacesAndNewlines).data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        return APIReply(status: status, object: object)
     }
 
     /// The parts of the many reply formats that matter.
@@ -838,7 +904,8 @@ final class BypassCenter {
         var isFinal: Bool { success != nil }
     }
 
-    private static func outcome(from reply: APIReply) -> Outcome {
+    /// Off the main thread: a reply can be large.
+    @concurrent private nonisolated static func outcome(from reply: APIReply) async -> Outcome {
         if reply.success == false || !(200..<300).contains(reply.status) {
             return .failed(reply.message ?? "HTTP \(reply.status)")
         }
@@ -865,6 +932,7 @@ final class BypassCenter {
     /// Off the main thread: a page can be large.
     @concurrent private nonisolated static func readPage(_ url: URL, session: URLSession) async -> (URL, Int, String)? {
         guard PublicAddress.allows(url) else { return nil }
+        let url = PublicAddress.secure(url)
         var request = URLRequest(url: url, timeoutInterval: 20)
         request.setValue("text/html,application/xhtml+xml,*/*", forHTTPHeaderField: "Accept")
         let redirects = RedirectGuard()
@@ -992,6 +1060,11 @@ final class BypassCenter {
         while Date() < deadline {
             guard !Task.isCancelled, !(interactive && skipRequested) else { return [] }
             try? await Task.sleep(for: .milliseconds(800))
+            // The link can be in an address and not in the page: a pop-up, a destination
+            // handed back, or the page went to MEGA. Only the last ones: a page can make many.
+            let addresses = [browser.currentURL].compactMap { $0 } + browser.popupURLs.suffix(20) + browser.handedBack.suffix(20)
+            let sent = MegaLinkFinder.links(in: addresses.map(\.absoluteString).joined(separator: "\n"))
+            if !sent.isEmpty { return sent }
             guard let page = await browser.scan(resultSelector: nil) else { continue }
             if interactive, collectRequested { return page.mega }
             if !page.mega.isEmpty {
@@ -1046,8 +1119,10 @@ final class BypassCenter {
                 default:
                     job.status = .needsYou("Solve the check of \(provider.name) in the panel")
                     switch await viaPage(provider, link: link, job: job, browser: browser, interactive: true) {
-                    case let .mega(links):
+                    case let .mega(links) where !links.isEmpty:
                         return links
+                    case .mega:
+                        job.attempts.append("\(provider.name) with you: no MEGA links")
                     case let .result(url):
                         var more: [BypassProvider] = []
                         let links = await follow(url, job: job, depth: 1, assist: &more)
@@ -1063,16 +1138,16 @@ final class BypassCenter {
         } ?? []
     }
 
-    private static func isIgnored(_ host: String) -> Bool {
+    private nonisolated static func isIgnored(_ host: String) -> Bool {
         LinkSorter.matches(host, ignoredHosts)
     }
 }
 
 private struct TimeoutError: Error {}
 
-/// The redirects of Bypass requests: never to this Mac or the local network, and an API
-/// key stays on the host of the API (a redirect to another host, or to plain HTTP, goes
-/// on without the key).
+/// The redirects of Bypass requests: never to this Mac or the local network, plain HTTP
+/// goes over HTTPS, and an API key stays on the host of the API (a redirect to another
+/// host, or to plain HTTP, goes on without the key).
 nonisolated final class RedirectGuard: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
     let keyHeader: String?
     private let lock = NSLock()
@@ -1095,8 +1170,9 @@ nonisolated final class RedirectGuard: NSObject, URLSessionTaskDelegate, @unchec
             lock.withLock { stoppedAt = next }
             return nil
         }
-        guard let keyHeader, next.host() != original?.host() || next.scheme?.lowercased() != "https" else { return request }
         var request = request
+        request.url = PublicAddress.secure(next)
+        guard let keyHeader, next.host() != original?.host() || next.scheme?.lowercased() != "https" else { return request }
         request.setValue(nil, forHTTPHeaderField: keyHeader)
         return request
     }
@@ -1107,18 +1183,27 @@ nonisolated final class RedirectGuard: NSObject, URLSessionTaskDelegate, @unchec
 nonisolated enum MegaLinkFinder {
     /// Base64 that starts with "http".
     private static let base64Pattern = try! NSRegularExpression(pattern: #"aHR0c[A-Za-z0-9+/_-]{16,}={0,2}"#)
+    /// A web address with percent escapes (https%3A%2F%2F…, …%23key), up to the end of
+    /// its query parameter.
+    private static let encodedPattern = try! NSRegularExpression(pattern: #"https?(?::|%3A)[^\s"'<>&]+"#, options: [.caseInsensitive])
 
     static func links(in text: String) -> [String] {
         var found = LinkParser.links(in: text).map(\.0)
+        var seen = Set(found.map(LinkParser.identity))
         func add(_ more: [String]) {
-            for link in more where !found.contains(where: { LinkParser.identity(of: $0) == LinkParser.identity(of: link) }) {
+            for link in more where seen.insert(LinkParser.identity(of: link)).inserted {
                 found.append(link)
             }
         }
-        if text.contains("%"), let decoded = text.removingPercentEncoding, decoded != text {
-            add(LinkParser.links(in: decoded).map(\.0))
-        }
         let range = NSRange(text.startIndex..., in: text)
+        // Each address alone: a "%" in other text (CSS "100%") does not stop the decoding.
+        if text.contains("%") {
+            for match in encodedPattern.matches(in: text, range: range) {
+                guard let span = Range(match.range, in: text), text[span].contains("%"),
+                      let decoded = text[span].removingPercentEncoding else { continue }
+                add(LinkParser.links(in: decoded).map(\.0))
+            }
+        }
         for match in base64Pattern.matches(in: text, range: range).prefix(500) {
             guard let span = Range(match.range, in: text), let decoded = decodeBase64(String(text[span])) else { continue }
             add(LinkParser.links(in: decoded).map(\.0))
@@ -1146,6 +1231,8 @@ nonisolated enum PublicAddress {
         while host.hasSuffix(".") { host.removeLast() }
         // "localhost", names of the local network, and numbers like 2130706433.
         if !host.contains(".") && !host.contains(":") { return false }
+        // IPv6 zones (fe80::1%en0) are on this Mac.
+        if host.contains("%") { return false }
         let localSuffixes = [".local", ".localhost", ".internal", ".lan", ".home.arpa", ".localdomain"]
         if host == "localhost" || localSuffixes.contains(where: host.hasSuffix) { return false }
         // inet_aton reads the short forms that the resolver also reads (127.1, 0x7f.1).
@@ -1163,7 +1250,17 @@ nonisolated enum PublicAddress {
             let multicast = bytes[0] == 0xff
             return !(unspecifiedOrLoopback || uniqueLocal || linkLocal || multicast)
         }
-        return true
+        // A ":" that is not in a valid IPv6 address.
+        return !host.contains(":")
+    }
+
+    /// The app loads only HTTPS (App Transport Security): an http:// address goes over HTTPS.
+    static func secure(_ url: URL) -> URL {
+        guard url.scheme?.lowercased() == "http",
+              var parts = URLComponents(url: url, resolvingAgainstBaseURL: true) else { return url }
+        parts.scheme = "https"
+        if parts.port == 80 { parts.port = nil }
+        return parts.url ?? url
     }
 
     private static func isPublic(v4 address: UInt32) -> Bool {
@@ -1190,13 +1287,17 @@ private func withTimeout<T: Sendable>(seconds: Double, _ work: @escaping @Sendab
 
 /// The private web view of Bypass: no stored cookies or history, no pop-ups,
 /// no downloads, only web addresses.
+@Observable
 final class BypassBrowser: NSObject, WKNavigationDelegate, WKUIDelegate {
     nonisolated static let userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15"
 
-    let webView: WKWebView
-    private(set) var popupURLs: [URL] = []
-    /// Destinations that a page handed back in an address (?redirect=<destination>).
-    private(set) var handedBack: [URL] = []
+    @ObservationIgnored let webView: WKWebView
+    @ObservationIgnored private(set) var popupURLs: [URL] = []
+    /// Destinations that a page handed back in an address (?redirect=<destination>), and
+    /// MEGA links that the page went to.
+    @ObservationIgnored private(set) var handedBack: [URL] = []
+    /// The host of the page on show, for the panel.
+    private(set) var host: String?
 
     struct PageScan: Decodable {
         let mega: [String]
@@ -1228,7 +1329,7 @@ final class BypassBrowser: NSObject, WKNavigationDelegate, WKUIDelegate {
     func load(_ url: URL) {
         popupURLs = []
         handedBack = []
-        webView.load(URLRequest(url: url))
+        webView.load(URLRequest(url: PublicAddress.secure(url)))
     }
 
     func stop() {
@@ -1244,10 +1345,12 @@ final class BypassBrowser: NSObject, WKNavigationDelegate, WKUIDelegate {
         }
     }
 
-    /// Nil removes the rules. They act from the next page that loads.
+    /// Nil removes the rules. They act from the next page that loads. The rules for the
+    /// addresses of this Mac and the local network stay on.
     func blockAds(_ rules: WKContentRuleList?) {
         let controller = webView.configuration.userContentController
         controller.removeAllContentRuleLists()
+        if let local = AdBlocker.localRules { controller.add(local) }
         if let rules { controller.add(rules) }
     }
 
@@ -1302,12 +1405,22 @@ final class BypassBrowser: NSObject, WKNavigationDelegate, WKUIDelegate {
             handedBack.append(destination)
             return .cancel
         }
+        // A MEGA link is the result: keep it; the MEGA web app is not needed.
+        if navigationAction.targetFrame?.isMainFrame != false, let url = navigationAction.request.url,
+           url.host().map({ LinkSorter.isMega($0.lowercased()) }) == true, !MegaLinkFinder.links(in: url.absoluteString).isEmpty {
+            handedBack.append(url)
+            return .cancel
+        }
         guard let scheme = navigationAction.request.url?.scheme?.lowercased() else { return .allow }
         return ["http", "https", "about", "blob", "data"].contains(scheme) ? .allow : .cancel
     }
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse) async -> WKNavigationResponsePolicy {
         navigationResponse.canShowMIMEType ? .allow : .cancel
+    }
+
+    func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+        host = webView.url?.host()
     }
 
     /// Pop-ups do not open; their address can be the result.
@@ -1335,8 +1448,10 @@ final class BypassBrowser: NSObject, WKNavigationDelegate, WKUIDelegate {
     // Also links in attributes and scripts, percent-encoded, or in Base64 (safelink pages).
     const source = document.documentElement ? document.documentElement.innerHTML.replace(/\\\//g, '/').replace(/&amp;/g, '&') : '';
     const found = new Set((all + '\n' + source).match(megaRe) || []);
-    const decoded = (() => { try { return decodeURIComponent((all + '\n' + source).replace(/\+/g, ' ')); } catch (e) { return ''; } })();
-    for (const m of (decoded.match(megaRe) || [])) found.add(m);
+    // Each encoded address alone: a '%' in other text (CSS '100%') does not stop the decoding.
+    for (const u of ((all + '\n' + source).match(/https?(?::|%3A)[^\s"'<>&]+/gi) || []).filter(u => u.includes('%')).slice(0, 2000)) {
+      try { for (const m of (decodeURIComponent(u.replace(/\+/g, ' ')).match(megaRe) || [])) found.add(m); } catch (e) {}
+    }
     for (const b of ((all + '\n' + source).match(/aHR0c[A-Za-z0-9+\/_-]{16,}={0,2}/g) || []).slice(0, 500)) {
       try { for (const m of (atob(b.replace(/-/g, '+').replace(/_/g, '/')).match(megaRe) || [])) found.add(m); } catch (e) {}
     }

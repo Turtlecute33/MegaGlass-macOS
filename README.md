@@ -103,10 +103,13 @@ screenshot driver are separate tools; the screenshot driver uses a saved account
   a file that cannot be decrypted, or a sync or database problem). It has no option to turn
   them off.
 - Bypass opens each protector link and its result pages from your internet address, sends
-  the link to the enabled third-party services and loads their pages; those services have
-  their own privacy policies. Clipboard-watch and browser-router links go to Bypass with no
-  other step. API keys stay on their own API host (no key on a redirect to another host).
-  Bypass never opens addresses on this Mac or on the local network.
+  the link, and each link that a locker gives back (not the MEGA links), to the enabled
+  third-party services and loads their pages; those services have their own privacy
+  policies. The rip.linkvertise.lol service uses the API host trw.lat. Clipboard-watch and
+  browser-router links go to Bypass with no other step. API keys stay on their own API host
+  (no key on a redirect to another host). Bypass blocks addresses on this Mac and on the
+  local network by number or by local name (such as .local), also for the requests of a
+  web page. It cannot block a public name that points to them.
 - The session token and the API keys are in the login Keychain. The password is never
   stored. Copied MEGA links stay on this Mac (no Universal Clipboard, marked as concealed
   for clipboard history apps).

@@ -763,7 +763,8 @@ struct PlatformTests {
         "http://localhost/", "http://127.0.0.1/", "http://127.1/", "http://2130706433/", "http://0x7f.1/",
         "http://10.0.0.5/", "http://192.168.1.1/admin", "http://172.16.0.1/", "http://169.254.169.254/latest",
         "http://100.64.0.1/", "http://0.0.0.0/", "http://[::1]/", "http://[fe80::1]/", "http://[fd00::1]/",
-        "http://[::ffff:192.168.1.1]/", "http://printer.local/", "http://router/", "http://nas.home.arpa/",
+        "http://[::ffff:192.168.1.1]/", "http://[fe80::1%25en0]/", "http://[::1%25lo0]/",
+        "http://printer.local/", "http://router/", "http://nas.home.arpa/",
         "file:///etc/hosts", "ftp://example.com/",
     ]) func bypassNeverOpensLocalAddresses(address: String) throws {
         #expect(!PublicAddress.allows(try #require(URL(string: address))))

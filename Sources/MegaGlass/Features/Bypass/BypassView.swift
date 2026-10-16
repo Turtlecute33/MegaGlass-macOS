@@ -122,6 +122,10 @@ struct BypassView: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(center.provider?.name ?? "Bypass").font(.headline)
                         Text(job.status.text).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                        if let host = center.browser?.host {
+                            Text("Web page of \(host), not MEGA. Do not type your MEGA password here.")
+                                .font(.caption).foregroundStyle(.orange).lineLimit(2)
+                        }
                     }
                     Spacer()
                     adToggle

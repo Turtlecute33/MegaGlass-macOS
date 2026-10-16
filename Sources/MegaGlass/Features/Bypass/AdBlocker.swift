@@ -7,17 +7,51 @@ import WebKit
 enum AdBlocker {
     /// A new list needs a new identifier.
     private static let identifier = "megaglass-ads-1"
+    private static let localIdentifier = "megaglass-local-1"
     private static var compiled: WKContentRuleList?
+    /// The rules for the addresses of this Mac and the local network, once compiled. The
+    /// Bypass web views always have them: they also block the requests of a page (scripts,
+    /// images, fetch, WebSocket), not only its navigations.
+    private(set) static var localRules: WKContentRuleList?
 
     static func rules(store: WKContentRuleListStore? = .default()) async -> WKContentRuleList? {
         if let compiled { return compiled }
-        guard let store else { return nil }
-        if let found = try? await store.contentRuleList(forIdentifier: identifier) {
-            compiled = found
-            return found
-        }
-        compiled = try? await store.compileContentRuleList(forIdentifier: identifier, encodedContentRuleList: ruleJSON)
+        compiled = await list(identifier, json: ruleJSON, store: store)
         return compiled
+    }
+
+    static func loadLocalRules(store: WKContentRuleListStore? = .default()) async -> WKContentRuleList? {
+        if let localRules { return localRules }
+        localRules = await list(localIdentifier, json: localRuleJSON, store: store)
+        return localRules
+    }
+
+    private static func list(_ identifier: String, json: String, store: WKContentRuleListStore?) async -> WKContentRuleList? {
+        guard let store else { return nil }
+        if let found = try? await store.contentRuleList(forIdentifier: identifier) { return found }
+        return try? await store.compileContentRuleList(forIdentifier: identifier, encodedContentRuleList: json)
+    }
+
+    /// Hosts of this Mac and of the local network, as WebKit writes them (numbers in the
+    /// dotted form, IPv6 in short form). WebKit rules have no "|": one rule for each form.
+    static let localHosts = [
+        // Names with no dot (localhost, router), and local name suffixes
+        #"[^\[:/.]+"#, #"localhost\."#, #"[^:/]+\.local\.?"#, #"[^:/]+\.localhost\.?"#, #"[^:/]+\.internal\.?"#,
+        #"[^:/]+\.lan\.?"#, #"[^:/]+\.home\.arpa\.?"#, #"[^:/]+\.localdomain\.?"#,
+        // IPv4: this network, loopback, private, link-local, shared (CGNAT)
+        #"0\.[0-9.]+"#, #"127\.[0-9.]+"#, #"10\.[0-9.]+"#, #"192\.168\.[0-9.]+"#, #"169\.254\.[0-9.]+"#,
+        #"172\.1[6-9]\.[0-9.]+"#, #"172\.2[0-9]\.[0-9.]+"#, #"172\.3[01]\.[0-9.]+"#,
+        #"100\.6[4-9]\.[0-9.]+"#, #"100\.[7-9][0-9]\.[0-9.]+"#, #"100\.1[01][0-9]\.[0-9.]+"#, #"100\.12[0-7]\.[0-9.]+"#,
+        // IPv6: unspecified, loopback and mapped IPv4; unique local, link-local, multicast
+        #"\[::[0-9a-f:.]*\]"#, #"\[f[c-f][0-9a-f:.]*\]"#,
+    ]
+
+    static var localRuleJSON: String {
+        let rules: [[String: Any]] = localHosts.map { host in
+            ["trigger": ["url-filter": "^[^:]+://+" + host + "[:/]"], "action": ["type": "block"]]
+        }
+        let data = (try? JSONSerialization.data(withJSONObject: rules)) ?? Data("[]".utf8)
+        return String(decoding: data, as: UTF8.self)
     }
 
     /// Ad and pop-up networks of locker, paste and bypass pages, and the common ad servers.

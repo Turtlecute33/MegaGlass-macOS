@@ -105,10 +105,10 @@ struct BypassChainTests {
 
     /// API services: BypassKit (keyless) and the bypass.tools API with a fixture key. No web
     /// views and no step 2: the chain logic only.
-    private func makeCenter() -> BypassCenter {
+    private func makeCenter(disabled: [String] = ["rip.linkvertise.lol"]) -> BypassCenter {
         let settings = AppSettings(defaults: UserDefaults(suiteName: suite)!)
         settings.bypassAutoOpen = false
-        settings.bypassDisabled = ["rip.linkvertise.lol"]
+        settings.bypassDisabled = disabled
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [BypassStub.self]
         return BypassCenter(settings: settings, configuration: configuration,
@@ -247,6 +247,129 @@ struct BypassChainTests {
         #expect(job.isFinished)
         #expect(!BypassStub.log.contains { $0.hasPrefix("192.168.1.1") })
     }
+
+    @Test func keysAreReadOnce() {
+        var reads = 0
+        let center = BypassCenter(settings: AppSettings(defaults: UserDefaults(suiteName: suite)!),
+                                  keyLookup: { reads += 1; return $0 == "bypass.tools-api" ? "fixture-key" : nil },
+                                  usesWebViews: false)
+        for _ in 0..<3 { _ = center.providers.filter(center.isEnabled) }
+        #expect(reads == BypassProvider.all.count(where: \.needsKey))
+        center.shutdown()
+        UserDefaults().removePersistentDomain(forName: suite)
+    }
+
+    @Test func megaLinkInTheLinkItselfNeedsNoRequest() async throws {
+        BypassStub.start(apiChain([:]))
+        let encoded = megaFile.addingPercentEncoding(withAllowedCharacters: .alphanumerics)!
+        let job = try await run("https://linkvertise.com/1/first?url=" + encoded, in: makeCenter())
+        #expect(job.megaLinks == [megaFile])
+        #expect(BypassStub.log.isEmpty)
+    }
+
+    @Test func eventStreamReplyIsRead() async throws {
+        BypassStub.start { host, submitted in
+            guard host == "trw.lat" else { return apiChain([:])(host, submitted) }
+            // The last line has no line end.
+            return BypassStub.Reply(headers: ["Content-Type": "text/event-stream"],
+                                    body: "data: {\"status\":\"progress\"}\n\ndata: {\"success\":true,\"result\":\"\(megaFile)\"}")
+        }
+        let job = try await run("https://linkvertise.com/1/first", in: makeCenter(disabled: []))
+        #expect(job.megaLinks == [megaFile])
+        #expect(job.attempts.contains("rip.linkvertise.lol: 1 MEGA link(s)"))
+    }
+
+    @Test func aJobKeepsOnlyTheLinksThatCanOpen() async throws {
+        let page = (0..<60).map { "<a href='https://mega.nz/file/Handle\($0)#Key\($0)'>file \($0)</a>" }.joined()
+        BypassStub.start { host, _ in host == "paste.example" ? .page(page) : BypassStub.Reply(status: 404) }
+        let job = try await run("https://paste.example/p/1", in: makeCenter())
+        #expect(job.status == .done(LinkCenter.openLimit))
+        #expect(job.megaLinks.count == LinkCenter.openLimit)
+        #expect(job.attempts.contains("60 MEGA links: only the first \(LinkCenter.openLimit) are kept"))
+    }
+
+    @Test func plainHTTPPageIsReadOverHTTPS() async throws {
+        BypassStub.start { host, _ in host == "paste.example" ? .page("<p>\(megaFolder)</p>") : BypassStub.Reply(status: 404) }
+        let job = try await run("http://paste.example/p/2", in: makeCenter())
+        #expect(job.megaLinks == [megaFolder])
+        #expect(BypassStub.log == ["paste.example https://paste.example/p/2"])
+    }
+}
+
+/// The parts of Bypass that read pages and addresses, with no network.
+@MainActor
+struct BypassParserTests {
+    private let page = URL(string: "https://paste.example/p/1")!
+
+    @Test func nextLinksFindsMegaButtonsAndLockers() {
+        let html = """
+            <a class="btn" href="https://paste.example/p/2">Get <b>MEGA</b> link</a>
+            <A HREF="/p/3?a=1&amp;b=2">mega</A>
+            <a href="https://t.me/channel">MEGA group</a>
+            <a href="https://mega.nz/folder/AbCd#Key">Mega</a>
+            <a href="https://other.example/x">Download</a>
+            Next: https://linkvertise.com/123/abc
+            """
+        #expect(BypassCenter.nextLinks(in: html, page: page, protectors: ["linkvertise.com"], limit: 10).map(\.absoluteString) == [
+            "https://paste.example/p/2", "https://paste.example/p/3?a=1&b=2", "https://linkvertise.com/123/abc",
+        ])
+        #expect(BypassCenter.nextLinks(in: html, page: page, protectors: ["linkvertise.com"], limit: 1).count == 1)
+        let many = (0..<5000).map { "<a href='/x\($0)'>mega</a>" }.joined()
+        #expect(BypassCenter.nextLinks(in: many, page: page, protectors: [], limit: 2).count == 2)
+    }
+
+    @Test(arguments: [
+        String(repeating: "<a ", count: 300_000),
+        String(repeating: "<a href='x", count: 100_000),
+        String(repeating: "<a>", count: 300_000),
+        "<a href" + String(repeating: " ", count: 1_000_000),
+        String(repeating: "<a href='/x'>mega</a>", count: 50_000),
+    ]) func brokenOrLargePageIsReadInTime(html: String) {
+        let start = ContinuousClock.now
+        _ = BypassCenter.nextLinks(in: html, page: page, protectors: ["linkvertise.com"], limit: .max)
+        _ = MegaLinkFinder.links(in: html)
+        #expect(ContinuousClock.now - start < .seconds(5))
+    }
+
+    @Test func megaLinkFinderDecodesEachAddressAlone() {
+        let encoded = megaFile.addingPercentEncoding(withAllowedCharacters: .alphanumerics)!
+        // "100%;" is not a valid escape: the whole page does not decode.
+        let html = "<style>div { width: 100%; }</style><a href=\"/go?u=\(encoded)&amp;x=1\">Download</a>"
+        #expect(MegaLinkFinder.links(in: html) == [megaFile])
+        #expect(MegaLinkFinder.links(in: "50% off: https://mega.nz/file/XyZ12345%23FileKey-0123456789abcdef").contains(megaFile))
+    }
+
+    @Test func megaLinkFinderCountsEachLinkOnce() {
+        let plain = (0..<5000).map { "https://mega.nz/file/H\($0)#K\($0)" }
+        let base64 = plain.prefix(500).map { Data($0.utf8).base64EncodedString() }
+        let start = ContinuousClock.now
+        let found = MegaLinkFinder.links(in: (plain + base64).joined(separator: " "))
+        #expect(found.count == 5000)
+        #expect(ContinuousClock.now - start < .seconds(5))
+    }
+
+    @Test func jobLinksAreRealMegaLinks() async {
+        #expect(await BypassCenter.validLinks([
+            megaFile, "javascript:alert(1)", megaFile, "https://evil.example/mega.nz/file/x#y", megaFolder + "\" onclick=\"x",
+        ]) == [megaFile, megaFolder])
+    }
+
+    @Test func plainHTTPGoesOverHTTPS() throws {
+        #expect(PublicAddress.secure(try #require(URL(string: "http://ouo.io:80/abc?x=1#f"))).absoluteString == "https://ouo.io/abc?x=1#f")
+        #expect(PublicAddress.secure(try #require(URL(string: "https://ouo.io/abc"))).absoluteString == "https://ouo.io/abc")
+        let redirect = RedirectGuard().redirect(URLRequest(url: try #require(URL(string: "http://paste.example/x"))), from: nil)
+        #expect(redirect?.url?.absoluteString == "https://paste.example/x")
+    }
+
+    @Test func localAddressRulesCompile() async throws {
+        let folder = FileManager.default.temporaryDirectory.appending(path: "megaglass-local-rules-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        // A private store: the rules of the app are not touched.
+        let store = try #require(WKContentRuleListStore(url: folder))
+        let rules = try await store.compileContentRuleList(forIdentifier: "local", encodedContentRuleList: AdBlocker.localRuleJSON)
+        #expect(rules != nil)
+    }
 }
 
 @MainActor
@@ -293,5 +416,18 @@ struct AdBlockerTests {
         await browser.waitUntilLoaded(timeout: 10)
         let page = try #require(await browser.scan(resultSelector: nil))
         #expect(Set(page.mega) == [megaFile, megaFolder])
+    }
+
+    @Test func scanDecodesEachAddressAlone() async throws {
+        let browser = BypassBrowser()
+        defer { browser.stop() }
+        let encoded = megaFile.addingPercentEncoding(withAllowedCharacters: .alphanumerics)!
+        browser.webView.loadHTMLString("""
+            <style>p { width: 100%; }</style>
+            <p>50% off</p><a href="https://safe.example/go?u=\(encoded)&x=1">Download</a>
+            """, baseURL: URL(string: "https://page.example/"))
+        await browser.waitUntilLoaded(timeout: 10)
+        let page = try #require(await browser.scan(resultSelector: nil))
+        #expect(page.mega == [megaFile])
     }
 }

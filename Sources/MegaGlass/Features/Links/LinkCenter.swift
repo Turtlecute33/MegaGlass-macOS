@@ -76,7 +76,7 @@ final class LinkSession: Identifiable {
                 fileNode = node
                 fileItem = NodeItem(node)
                 totalSize = fileItem?.size
-                title = node.name ?? title
+                title = LocalFileSafety.displayName(node.name ?? title)
             case .folder:
                 if let old = engine {
                     // A failed attempt: its engine closes before a new one uses the same folder.
@@ -98,7 +98,7 @@ final class LinkSession: Identifiable {
                 _ = try await sdk.request { sdk.fetchNodes(with: $0) }
                 guard !closed, !Task.isCancelled else { return }
                 guard let root = sdk.rootNode else { throw MegaFailure(code: -9, message: "The folder is not available.") }
-                title = root.name ?? title
+                title = LocalFileSafety.displayName(root.name ?? title)
                 // The size of the tree takes the engine lock: not on the main thread.
                 let rootHandle = root.handle
                 totalSize = await EngineQueue.run { sdk.node(forHandle: rootHandle).map { sdk.size(for: $0).int64Value } }

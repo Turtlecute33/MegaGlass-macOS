@@ -1,0 +1,69 @@
+diff --git a/include/megaapi.h b/include/megaapi.h
+index 9222d02..b0fd4ab 100644
+--- a/include/megaapi.h
++++ b/include/megaapi.h
+@@ -29771,6 +29771,15 @@ public:
+      */
+     virtual uint64_t getReclaimableSize() const = 0;
+ }; // MegaFileServiceStorageInfo
++
++/**
++ * @brief Sets the function that gives the local name of each file and folder inside a folder
++ * download, from its node name. Without it, the node name is used.
++ *
++ * Set it before the first download. The SDK calls it on its own threads, also on several
++ * threads at the same time.
++ */
++void setFolderDownloadNameFilter(std::string (*filter)(const std::string& name));
+ }
+ 
+ #endif //MEGAAPI_H
+diff --git a/src/megaapi_impl.cpp b/src/megaapi_impl.cpp
+index baebdb9..a857a59 100644
+--- a/src/megaapi_impl.cpp
++++ b/src/megaapi_impl.cpp
+@@ -35050,6 +35050,24 @@ void MegaFolderDownloadController::start(MegaNode *node)
+     }
+ }
+ 
++namespace
++{
++std::atomic<std::string (*)(const std::string&)> folderDownloadNameFilter{nullptr};
++
++// The local name of a file or folder inside a folder download
++std::string folderDownloadName(const char* name)
++{
++    std::string result = name ? name : "";
++    auto filter = folderDownloadNameFilter.load();
++    return filter ? filter(result) : result;
++}
++}
++
++void setFolderDownloadNameFilter(std::string (*filter)(const std::string& name))
++{
++    folderDownloadNameFilter = filter;
++}
++
+ LocalPath MegaFolderDownloadController::childLocalPath(const LocalTree& folder, size_t ci) const
+ {
+     LocalPath path = folder.localPath;
+@@ -35061,7 +35079,9 @@ LocalPath MegaFolderDownloadController::childLocalPath(const LocalTree& folder,
+     }
+ 
+     path.appendWithSeparator(
+-        LocalPath::fromRelativeName(folder.childrenNodes[ci]->getName(), *fsaccess, folder.fsType),
++        LocalPath::fromRelativeName(folderDownloadName(folder.childrenNodes[ci]->getName()),
++                                    *fsaccess,
++                                    folder.fsType),
+         true);
+     return path;
+ }
+@@ -35596,7 +35616,7 @@ MegaFolderDownloadController::scanFolder_result MegaFolderDownloadController::sc
+         {
+             LocalPath newpath{localpath};
+             newpath.appendWithSeparator(
+-                LocalPath::fromRelativeName(child->getName(), *fsaccess, fsType),
++                LocalPath::fromRelativeName(folderDownloadName(child->getName()), *fsaccess, fsType),
+                 true);
+             scanFolder_result result = scanFolder(child, newpath, fsType, fileAddedCount);
+ 

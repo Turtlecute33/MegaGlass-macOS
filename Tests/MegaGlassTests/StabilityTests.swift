@@ -713,7 +713,73 @@ struct PlatformTests {
         let safe = LocalFileSafety.filename(name)
         #expect(safe.utf8.count <= 255)
         #expect(safe.hasSuffix(".mp4"))
+        // The " (2)" that the SDK adds to a name in use still fits.
+        #expect(safe.utf8.count + " (99)".utf8.count <= 255)
         #expect(LocalFileSafety.filename("short.txt") == "short.txt")
+        // 90 CJK characters are 270 bytes: whole characters are cut, the extension stays.
+        let cjk = LocalFileSafety.filename(String(repeating: "日", count: 90) + ".pdf")
+        #expect(cjk.utf8.count <= 255 && cjk.hasPrefix("日日") && cjk.hasSuffix("日.pdf"))
+        let bare = LocalFileSafety.filename(String(repeating: "a", count: 400))
+        #expect(bare.utf8.count + " (99)".utf8.count <= 255 && bare.allSatisfy { $0 == "a" })
+        // 200 bytes, but 300 UTF-16 units when decomposed, as the SDK writes it.
+        let marks = LocalFileSafety.filename(String(repeating: "\u{01D8}", count: 100) + ".txt")
+        #expect(marks.hasSuffix(".txt") && marks.decomposedStringWithCanonicalMapping.utf16.count <= 240)
+        #expect(LocalFileSafety.filename(String(repeating: "x", count: 236) + ".txt").count == 240)
+    }
+
+    @Test func shortenedNamesCanBeWritten() throws {
+        let folder = FileManager.default.temporaryDirectory.appending(path: "megaglass-names-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let long = ["é", "日", "😀", "\u{01D8}", "한", "a"].map { String(repeating: $0, count: 400) + ".pdf" }
+        for name in long {
+            let safe = LocalFileSafety.filename(name)
+            #expect(safe.utf8.count <= 255 && safe.hasSuffix(".pdf"))
+            // As the SDK writes it, with the suffix of a name in use.
+            for leaf in [safe, (safe as NSString).deletingPathExtension + " (99).pdf"] {
+                #expect(FileManager.default.createFile(atPath: folder.appending(path: leaf).path, contents: nil))
+            }
+        }
+    }
+
+    @Test func remoteNamesLoseDirectionMarksAndControls() {
+        #expect(LocalFileSafety.displayName("invoice\u{202E}fdp.terminal") == "invoicefdp.terminal")
+        let marks = "\u{061C}\u{200B}\u{200C}\u{200D}\u{200E}\u{200F}\u{202A}\u{202B}\u{202C}\u{202D}\u{202E}"
+            + "\u{2060}\u{2061}\u{2064}\u{2066}\u{2067}\u{2068}\u{2069}\u{FEFF}"
+        #expect(LocalFileSafety.displayName("a" + marks + "b.txt") == "ab.txt")
+        #expect(LocalFileSafety.displayName("a\nb\u{0}\u{1B}\u{7F}\u{85}\u{9F}.txt")
+                == "a\u{FFFD}b\u{FFFD}\u{FFFD}\u{FFFD}\u{FFFD}\u{FFFD}.txt")
+        #expect(LocalFileSafety.displayName("invoice.pdf\u{2028}.terminal") == "invoice.pdf\u{FFFD}.terminal")
+        #expect(LocalFileSafety.displayName("日本語 😀 Ünïcode – ok.txt") == "日本語 😀 Ünïcode – ok.txt")
+        // The same rules give the names on disk.
+        #expect(LocalFileSafety.filename("photo\u{202E}gpj.app") == "photogpj.app")
+        #expect(LocalFileSafety.filename("\u{202E}\u{200F}") == "Untitled")
+        // The browser shows the real type.
+        let item = NodeItem(id: 1, name: "invoice\u{202E}fdp.terminal")
+        #expect(item.name == "invoicefdp.terminal")
+        #expect(item.kind == .other && item.kindTitle != "Document")
+        #expect(NodeItem(id: 2, name: "data.zq9x").kindTitle == "ZQ9X File")
+        #expect(NodeItem(id: 3, name: "report.pdf").kindTitle == "PDF Document")
+    }
+
+    @Test func finishedDownloadsAreQuarantined() throws {
+        let file = FileManager.default.temporaryDirectory.appending(path: "megaglass-\(UUID().uuidString).command")
+        try Data("echo test".utf8).write(to: file)
+        defer { try? FileManager.default.removeItem(at: file) }
+        #expect(getxattr(file.path, "com.apple.quarantine", nil, 0, 0, 0) < 0)
+        LocalFileSafety.quarantine(file)
+        #expect(getxattr(file.path, "com.apple.quarantine", nil, 0, 0, 0) > 0)
+    }
+
+    @Test func previewSkipsTypesWithoutAPreview() {
+        #expect(PreviewView.noAutomaticPreview(NodeItem(id: 1, name: "backup.r00"), allowLarge: false)?.canForce == false)
+        #expect(PreviewView.noAutomaticPreview(NodeItem(id: 2, name: "mail.eml"), allowLarge: false)?.canForce == false)
+        #expect(PreviewView.noAutomaticPreview(NodeItem(id: 3, name: "tool.exe"), allowLarge: false)?.canForce == false)
+        // Text and code with an extension that macOS does not know show as text.
+        #expect(PreviewView.noAutomaticPreview(NodeItem(id: 4, name: "release.nfo"), allowLarge: false) == nil)
+        #expect(PreviewView.noAutomaticPreview(NodeItem(id: 5, name: "config.toml"), allowLarge: false) == nil)
+        #expect(PreviewView.noAutomaticPreview(NodeItem(id: 6, name: "report.pdf"), allowLarge: false) == nil)
+        #expect(PreviewView.noAutomaticPreview(NodeItem(id: 7, name: "big.pdf", size: 300_000_000), allowLarge: false)?.canForce == true)
     }
 
     @Test func megaSchemeLinksNeedABoundary() {

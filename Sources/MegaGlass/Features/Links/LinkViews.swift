@@ -142,7 +142,7 @@ private struct FileLinkView: View {
                     .font(.title2.weight(.semibold))
                     .multilineTextAlignment(.center)
                     .textSelection(.enabled)
-                Text([item.kind.title, item.duration > 0 ? Format.playtime(Double(item.duration)) : nil,
+                Text([item.kindTitle, item.duration > 0 ? Format.playtime(Double(item.duration)) : nil,
                       Format.bytes(item.size)].compactMap { $0 }.joined(separator: " · "))
                     .monospacedDigit()
                     .foregroundStyle(.secondary)

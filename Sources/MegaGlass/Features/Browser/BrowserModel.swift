@@ -340,7 +340,7 @@ final class BrowserModel {
             case .name: comparison = a.name.localizedStandardCompare(b.name)
             case .size: comparison = a.size == b.size ? .orderedSame : (a.size < b.size ? .orderedAscending : .orderedDescending)
             case .modified: comparison = a.modified.compare(b.modified)
-            case .kind: comparison = a.kind.title.compare(b.kind.title)
+            case .kind: comparison = a.kindTitle.compare(b.kindTitle)
             }
             if comparison == .orderedSame { comparison = a.name.localizedStandardCompare(b.name) }
             if comparison == .orderedSame { return a.id < b.id }
@@ -397,7 +397,7 @@ final class BrowserModel {
             switch node.type {
             case .root: title = rootTitle
             case .rubbish: title = "Rubbish Bin"
-            default: title = node.handle == vault ? "Backups" : (node.name ?? "Folder")
+            default: title = node.handle == vault ? "Backups" : LocalFileSafety.displayName(node.name ?? "Folder")
             }
             result.append((.folder(node.handle), title))
             if node.isInShare() {

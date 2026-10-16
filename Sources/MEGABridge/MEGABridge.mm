@@ -68,6 +68,17 @@ NSString *ownedString(const char *value)
     return string(value);
 }
 
+NSString *(^folderDownloadNameFilter)(NSString *);
+
+std::string folderDownloadName(const std::string &name)
+{
+    @autoreleasepool {
+        NSString *value = [[NSString alloc] initWithBytes:name.data() length:name.size() encoding:NSUTF8StringEncoding];
+        NSString *filtered = value ? folderDownloadNameFilter(value) : nil;
+        return filtered.length ? std::string(filtered.UTF8String) : name;
+    }
+}
+
 MegaRequestListener *completionListener(MGRequestCompletion completion)
 {
     MGRequestCompletion done = [completion copy];
@@ -145,6 +156,13 @@ MegaRequestListener *completionListener(MGRequestCompletion completion)
 - (void)mg_setMaxUploadSpeed:(long long)bytesPerSecond
 {
     if (MegaApi *api = [self getCPtr]) api->setMaxUploadSpeed(bytesPerSecond);
+}
+
++ (void)mg_setFolderDownloadNameFilter:(NSString * (NS_SWIFT_SENDABLE ^)(NSString *))filter
+{
+    // The block first: an engine thread that sees the function also sees the block.
+    folderDownloadNameFilter = [filter copy];
+    mega::setFolderDownloadNameFilter(folderDownloadName);
 }
 
 @end

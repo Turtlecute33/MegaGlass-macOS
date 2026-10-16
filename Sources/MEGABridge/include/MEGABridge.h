@@ -24,6 +24,12 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)mg_setMaxDownloadSpeed:(long long)bytesPerSecond NS_SWIFT_NAME(setMaxDownloadSpeed(_:));
 - (void)mg_setMaxUploadSpeed:(long long)bytesPerSecond NS_SWIFT_NAME(setMaxUploadSpeed(_:));
 
+/// Gives the local name of each file and folder inside a folder download, from its node
+/// name, for all engines. Set it once, before the first download: the engines call it on
+/// their own threads.
++ (void)mg_setFolderDownloadNameFilter:(NSString * (NS_SWIFT_SENDABLE ^)(NSString *name))filter
+    NS_SWIFT_NAME(setFolderDownloadNameFilter(_:));
+
 @end
 
 @interface MEGATransfer (MGBridge)

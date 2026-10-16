@@ -11,6 +11,8 @@ nonisolated struct NodeItem: Identifiable, Hashable, Sendable {
     let size: Int64
     let modified: Date
     let created: Date
+    /// Only for the kinds that MEGA makes pictures of. On other files, a picture that the
+    /// uploader set would hide the real type ("invoice.pdf" art on a script).
     let hasThumbnail: Bool
     let hasPreview: Bool
     let label: Int
@@ -22,6 +24,9 @@ nonisolated struct NodeItem: Identifiable, Hashable, Sendable {
     let parentHandle: UInt64
     let restoreHandle: UInt64
     let kind: FileKind
+    /// What the file is. Types that the app does not group get the name that macOS gives
+    /// them ("Terminal settings"): "Document" would hide what they are.
+    let kindTitle: String
     /// Length of a video or audio file in seconds; 0 when it is not known.
     let duration: Int
 
@@ -31,7 +36,7 @@ nonisolated struct NodeItem: Identifiable, Hashable, Sendable {
     init(id: UInt64, name: String, isFolder: Bool = false, size: Int64 = 0,
          modified: Date = .distantPast) {
         self.id = id
-        self.name = name
+        self.name = LocalFileSafety.displayName(name)
         self.isFolder = isFolder
         self.size = size
         self.modified = modified
@@ -46,19 +51,24 @@ nonisolated struct NodeItem: Identifiable, Hashable, Sendable {
         isTakenDown = false
         parentHandle = invalidHandle
         restoreHandle = invalidHandle
-        kind = isFolder ? .folder : FileKind(extension: (name as NSString).pathExtension.lowercased())
+        let ext = (self.name as NSString).pathExtension.lowercased()
+        kind = isFolder ? .folder : FileKind(extension: ext)
+        kindTitle = kind.title(extension: ext)
         duration = 0
     }
 
     init(_ node: MEGANode, folderSize: Int64? = nil) {
         id = node.handle
-        name = node.name ?? "Untitled"
+        name = LocalFileSafety.displayName(node.name ?? "Untitled")
         isFolder = node.isFolder()
+        let ext = (name as NSString).pathExtension.lowercased()
+        kind = isFolder ? .folder : FileKind(extension: ext)
+        kindTitle = kind.title(extension: ext)
         size = folderSize ?? node.size?.int64Value ?? 0
         created = node.creationTime ?? .distantPast
         modified = node.isFile() ? (node.modificationTime ?? created) : created
-        hasThumbnail = node.hasThumbnail()
-        hasPreview = node.hasPreview()
+        hasThumbnail = kind.hasPictures && node.hasThumbnail()
+        hasPreview = kind.hasPictures && node.hasPreview()
         label = node.label.rawValue
         isFavourite = node.isFavourite
         isExported = node.isExported()
@@ -67,7 +77,6 @@ nonisolated struct NodeItem: Identifiable, Hashable, Sendable {
         isTakenDown = node.isTakenDown()
         parentHandle = node.parentHandle
         restoreHandle = node.restoreHandle
-        kind = isFolder ? .folder : FileKind(extension: (name as NSString).pathExtension.lowercased())
         // From the file's media attributes, decrypted with its key: no download.
         duration = kind.isStreamable ? max(0, node.duration) : 0
     }
@@ -118,6 +127,18 @@ nonisolated enum FileKind: String, Sendable, CaseIterable {
     }
 
     var isStreamable: Bool { self == .video || self == .audio }
+
+    /// The kinds that MEGA clients make thumbnails and previews for (audio: the cover).
+    var hasPictures: Bool { self == .image || self == .video || self == .audio || self == .pdf }
+
+    /// The title for a file of this kind with this extension.
+    func title(extension ext: String) -> String {
+        guard self == .other, !ext.isEmpty else { return title }
+        guard let description = UTType(filenameExtension: ext)?.localizedDescription, !description.isEmpty else {
+            return ext.uppercased() + " File"
+        }
+        return description.prefix(1).uppercased() + description.dropFirst()
+    }
 }
 
 /// Finder icons, one per file type, made once.

@@ -114,8 +114,11 @@ private struct TransferRow: View {
         .padding(.vertical, 4)
         .contextMenu {
             if !item.isFinished {
-                Button(item.state == .paused ? "Resume" : "Pause") { app.transfers.pause(item, item.state != .paused) }
-                Button("Move to Top") { app.transfers.moveToTop(item) }
+                // The SDK pauses and moves only file transfers: a folder has Cancel and Pause All.
+                if !item.isFolder {
+                    Button(item.state == .paused ? "Resume" : "Pause") { app.transfers.pause(item, item.state != .paused) }
+                    Button("Move to Top") { app.transfers.moveToTop(item) }
+                }
                 Button("Cancel", role: .destructive) { app.transfers.cancel(item) }
             } else {
                 if item.isDownload, item.state == .complete {
@@ -140,12 +143,14 @@ private struct TransferRow: View {
     private var actions: some View {
         HStack(spacing: 6) {
             if !item.isFinished {
-                Button {
-                    app.transfers.pause(item, item.state != .paused)
-                } label: {
-                    Image(systemName: item.state == .paused ? "play.circle" : "pause.circle")
+                if !item.isFolder {
+                    Button {
+                        app.transfers.pause(item, item.state != .paused)
+                    } label: {
+                        Image(systemName: item.state == .paused ? "play.circle" : "pause.circle")
+                    }
+                    .help(item.state == .paused ? "Resume" : "Pause")
                 }
-                .help(item.state == .paused ? "Resume" : "Pause")
                 Button {
                     app.transfers.cancel(item)
                 } label: {

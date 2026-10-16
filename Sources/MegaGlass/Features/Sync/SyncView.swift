@@ -38,7 +38,7 @@ struct SyncView: View {
                             Label(SyncCenter.describe(stall), systemImage: "exclamationmark.triangle.fill")
                                 .foregroundStyle(.orange)
                             ForEach(Array((stall.localPaths + stall.cloudPaths).enumerated()), id: \.offset) { _, path in
-                                Text(path).font(.caption.monospaced()).foregroundStyle(.secondary).lineLimit(1)
+                                Text(LocalFileSafety.displayName(path)).font(.caption.monospaced()).foregroundStyle(.secondary).lineLimit(1)
                             }
                         }
                     }
@@ -83,13 +83,13 @@ struct SyncView: View {
                 .symbolEffect(.rotate, isActive: stats?.syncing == true)
                 .frame(width: 32)
             VStack(alignment: .leading, spacing: 3) {
-                Text(sync.name).font(.headline)
+                Text(LocalFileSafety.displayName(sync.name)).font(.headline)
                 Label(sync.localPath, systemImage: "laptopcomputer")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
-                Label(sync.remotePath.isEmpty ? "MEGA" : sync.remotePath, systemImage: "cloud")
+                Label(sync.remotePath.isEmpty ? "MEGA" : LocalFileSafety.displayName(sync.remotePath), systemImage: "cloud")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -193,7 +193,7 @@ private struct AddSyncSheet: View {
                 let sdk = app.engine.sdk
                 Task {
                     let path = await EngineQueue.run { sdk.node(forHandle: handle).flatMap { sdk.nodePath(for: $0) } }
-                    if remote == handle { remoteName = path ?? "Folder" }
+                    if remote == handle { remoteName = LocalFileSafety.displayName(path ?? "Folder") }
                 }
             }
         }

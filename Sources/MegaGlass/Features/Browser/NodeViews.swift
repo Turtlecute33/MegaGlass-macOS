@@ -44,8 +44,8 @@ struct NodeTable<Menu: View>: View {
             }
             .width(min: 56, ideal: 70)
 
-            TableColumn("Kind", value: \.kind.title) { item in
-                Text(item.kind.title)
+            TableColumn("Kind", value: \.kindTitle) { item in
+                Text(item.kindTitle)
                     .foregroundStyle(.secondary)
             }
             .width(min: 80, ideal: 110)
@@ -56,7 +56,7 @@ struct NodeTable<Menu: View>: View {
             let key: SortKey = switch first.keyPath {
             case \NodeItem.size: .size
             case \NodeItem.modified: .modified
-            case \NodeItem.kind.title: .kind
+            case \NodeItem.kindTitle: .kind
             default: .name
             }
             model.setSort(key, ascending: first.order == .forward)
@@ -73,7 +73,7 @@ struct NodeTable<Menu: View>: View {
         case .name: KeyPathComparator(\NodeItem.name, order: order)
         case .size: KeyPathComparator(\NodeItem.size, order: order)
         case .modified: KeyPathComparator(\NodeItem.modified, order: order)
-        case .kind: KeyPathComparator(\NodeItem.kind.title, order: order)
+        case .kind: KeyPathComparator(\NodeItem.kindTitle, order: order)
         }
         if sortOrder.first != comparator { sortOrder = [comparator] }
     }

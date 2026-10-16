@@ -48,7 +48,7 @@ nonisolated struct TransferSnapshot: Sendable {
     init(_ transfer: MEGATransfer, error: MEGAError? = nil, finished: Bool = false) {
         tag = transfer.tag
         isDownload = transfer.type == .download
-        name = transfer.fileName ?? (transfer.path as NSString?)?.lastPathComponent ?? "Item"
+        name = LocalFileSafety.displayName(transfer.fileName ?? (transfer.path as NSString?)?.lastPathComponent ?? "Item")
         path = transfer.path
         parentPath = transfer.parentPath
         nodeHandle = transfer.nodeHandle
@@ -359,9 +359,11 @@ final class TransferCenter {
     func retry(_ item: TransferItem) {
         guard let transfer = feed.lastTransfer(item.id) else { return }
         remove(item)
-        // retryTransfer uses a transfer delegate, not a request delegate. Its result
-        // arrives through the global transfer feed with the new transfer tag.
-        engine.sdk.retryTransfer(transfer)
+        let sdk = engine.sdk
+        // retryTransfer reads nodes with the engine lock: not on the main thread. It uses a
+        // transfer delegate, not a request delegate. Its result arrives through the global
+        // transfer feed with the new transfer tag.
+        Task { await EngineQueue.run { sdk.retryTransfer(transfer) } }
     }
 
     func remove(_ item: TransferItem) {
@@ -427,10 +429,20 @@ nonisolated final class TransferFeed: NSObject, MEGATransferDelegate, @unchecked
     }
 
     func onTransferFinish(_ api: MEGASdk, transfer: MEGATransfer, error: MEGAError) {
+        if error.type == .apiOk, Self.isUserDownload(transfer), let path = transfer.path {
+            LocalFileSafety.quarantine(URL(filePath: path))
+        }
         if error.type != .apiOk, Self.isListed(transfer) {
             lock.withLock { if !retired.contains(transfer.tag) { failed[transfer.tag] = transfer } }
         }
         record(transfer, error: error, finished: true)
+    }
+
+    /// A file that you downloaded, alone or in a folder. Not quarantined: the files of syncs,
+    /// the preview cache and streams.
+    static func isUserDownload(_ transfer: MEGATransfer) -> Bool {
+        transfer.type == .download && !transfer.isFolderTransfer && !transfer.isStreamingTransfer
+            && transfer.appData != TransferSnapshot.previewTag && !transfer.isSyncTransfer
     }
 
     /// The list shows the transfers that you started. Not listed: the files inside a

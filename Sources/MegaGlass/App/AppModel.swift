@@ -65,6 +65,8 @@ final class AppModel {
     @ObservationIgnored private var started = false
 
     init() {
+        // The files and folders inside a folder download get clean names, as single downloads do.
+        MEGASdk.setFolderDownloadNameFilter { LocalFileSafety.filename($0) }
         let settings = AppSettings()
         self.settings = settings
         let engine = MegaEngine(kind: .account, id: "account", basePath: AppPaths.accountEngine,
@@ -271,11 +273,12 @@ final class AppModel {
                 return
             }
             for node in nodes {
-                sdk.startDownloadNode(node, localPath: target, fileName: nil, appData: nil, startFirst: false,
-                                      cancelToken: nil, collisionCheck: .fingerprint, collisionResolution: .newWithN)
+                sdk.startDownloadNode(node, localPath: target, fileName: node.name.map(LocalFileSafety.filename),
+                                      appData: nil, startFirst: false, cancelToken: nil,
+                                      collisionCheck: .fingerprint, collisionResolution: .newWithN)
             }
-            notify(nodes.count == 1 ? "Downloading \(nodes[0].name ?? "item")" : "Downloading \(nodes.count) items",
-                   symbol: "arrow.down.circle")
+            notify(nodes.count == 1 ? "Downloading \(LocalFileSafety.displayName(nodes[0].name ?? "item"))"
+                   : "Downloading \(nodes.count) items", symbol: "arrow.down.circle")
         }
     }
 
@@ -283,9 +286,10 @@ final class AppModel {
     func download(publicNode node: MEGANode) {
         guard let folder = downloadFolder() else { return }
         let target = folder.path.hasSuffix("/") ? folder.path : folder.path + "/"
-        engine.sdk.startDownloadNode(node, localPath: target, fileName: nil, appData: nil, startFirst: false,
-                                     cancelToken: nil, collisionCheck: .fingerprint, collisionResolution: .newWithN)
-        notify("Downloading \(node.name ?? "file")", symbol: "arrow.down.circle")
+        engine.sdk.startDownloadNode(node, localPath: target, fileName: node.name.map(LocalFileSafety.filename),
+                                     appData: nil, startFirst: false, cancelToken: nil,
+                                     collisionCheck: .fingerprint, collisionResolution: .newWithN)
+        notify("Downloading \(LocalFileSafety.displayName(node.name ?? "file"))", symbol: "arrow.down.circle")
     }
 
     private func downloadFolder() -> URL? {
@@ -453,7 +457,7 @@ final class AppModel {
                     }
                 }
                 guard let link = request.link else {
-                    throw MegaFailure(code: -9, message: "MEGA did not return a link for “\(node.name ?? "the item")”.")
+                    throw MegaFailure(code: -9, message: "MEGA did not return a link for “\(LocalFileSafety.displayName(node.name ?? "the item"))”.")
                 }
                 result.append(link)
             }

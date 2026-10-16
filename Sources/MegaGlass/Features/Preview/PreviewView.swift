@@ -227,7 +227,7 @@ struct PreviewView: View {
                 .frame(width: 96, height: 96)
             VStack(spacing: 4) {
                 Text(item.name).font(.title3.weight(.semibold)).multilineTextAlignment(.center)
-                Text([item.kind.title, item.duration > 0 ? Format.playtime(Double(item.duration)) : nil,
+                Text([item.kindTitle, item.duration > 0 ? Format.playtime(Double(item.duration)) : nil,
                       Format.bytes(item.size)].compactMap { $0 }.joined(separator: " · "))
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
@@ -269,22 +269,22 @@ struct PreviewView: View {
         self.item = item
         prefetchNeighbors(of: handle, engine: engine)
 
-        if item.kind.isStreamable {
-            let routes = await streamRoutes(node, engine: engine)
-            guard !Task.isCancelled, !invalidated else { return }
+        let routes = item.kind.isStreamable ? await streamRoutes(node, engine: engine) : []
+        guard !Task.isCancelled, !invalidated else { return }
+        // A TypeScript file with a video extension shows as text.
+        let isText = await isTypeScript(item, routes: routes)
+        guard !Task.isCancelled, !invalidated else { return }
+        if item.kind.isStreamable, !isText {
             if MediaPlayerView.unsupported.contains(item.fileExtension) {
                 // The other player does not tell when the stream fails: check the stream here first.
-                let check = await workingRoute(routes)
+                let external = await externalStream(routes)
                 guard !Task.isCancelled, !invalidated else { return }
-                var stream: URL?
-                if let route = check.route { stream = await address(route) }
-                guard !Task.isCancelled, !invalidated else { return }
-                state = .cannotPlay(check.route == nil ? check.reason : "macOS cannot play \(item.fileExtension.uppercased()) files.",
-                                    stream: stream)
+                state = .cannotPlay(external.url == nil ? external.reason : "macOS cannot play \(item.fileExtension.uppercased()) files.",
+                                    stream: external.url)
                 return
             }
             guard let first = routes.first, let url = await address(first) else {
-                state = .failed("The local stream did not start.")
+                if !Task.isCancelled, !invalidated { state = .failed("The local stream did not start.") }
                 return
             }
             await play(url, route: first, routes: routes)
@@ -317,7 +317,7 @@ struct PreviewView: View {
         guard !Task.isCancelled, !invalidated else { return }
         let target: URL
         do {
-            target = try await download.run(sdk: app.engine.sdk, node: source) { [weak download] progress in
+            target = try await download.run(sdk: app.engine.sdk, node: source, asText: isText) { [weak download] progress in
                 // Progress tasks have their own cancellation state; compare the actual
                 // download identity instead of Task.isCancelled in that new task.
                 guard let download, self.download === download else { return }
@@ -354,12 +354,16 @@ struct PreviewView: View {
         }
     }
 
-    /// Files that Quick Look cannot show are not downloaded for a preview.
+    /// Files that Quick Look cannot show are not downloaded for a preview. An extension that
+    /// macOS does not know gets a dynamic type; text and code show as text all the same.
+    /// Mail messages can load remote pictures in Quick Look, so they get no preview.
     /// Large files need a click, because the preview decrypts the whole file.
-    private static func noAutomaticPreview(_ item: NodeItem, allowLarge: Bool) -> (message: String, canForce: Bool)? {
+    static func noAutomaticPreview(_ item: NodeItem, allowLarge: Bool) -> (message: String, canForce: Bool)? {
         let type = UTType(filenameExtension: item.fileExtension)
         let unsupported = item.kind == .archive || type == nil
+            || (type?.isDynamic == true && item.kind != .text && item.kind != .code)
             || type?.conforms(to: .executable) == true || type?.conforms(to: .diskImage) == true
+            || mailTypes.contains { type?.conforms(to: $0) == true }
         if unsupported {
             return ("There is no preview for this kind of file. Download it to open it.", false)
         }
@@ -369,10 +373,16 @@ struct PreviewView: View {
         return nil
     }
 
+    private static let mailTypes = ["com.apple.mail.email", "com.apple.mail.emlx"].compactMap { UTType($0) }
+
     /// Plays a stream. When the player fails, or does not start in 12 s, the app checks the
     /// routes of the stream: it goes on with one that gives data, or shows why none does.
     private func play(_ url: URL, route: StreamRoute, routes: [StreamRoute]) async {
-        let player = AVPlayer(url: url)
+        // A movie can refer to media data at other addresses or in local files: the player
+        // reads only this stream.
+        let asset = AVURLAsset(url: url, options: [AVURLAssetReferenceRestrictionsKey:
+                                                       AVAssetReferenceRestrictions.forbidAll.rawValue])
+        let player = AVPlayer(playerItem: AVPlayerItem(asset: asset))
         self.player = player
         state = .media
         player.play()
@@ -407,11 +417,14 @@ struct PreviewView: View {
                 patient = true
                 continue
             }
+            // With data but no picture, the player cannot play the file; another player can.
+            var stream: URL?
+            if check.route != nil { stream = await externalStream(routes).url ?? url }
+            guard !Task.isCancelled, !invalidated, self.player === player else { return }
             player.pause()
             self.player = nil
-            // With data but no picture, the player cannot play the file; another player can.
             state = check.route == nil ? .cannotPlay(check.reason, stream: nil)
-                : .cannotPlay(Self.formatFailure(playerItem.error), stream: url)
+                : .cannotPlay(Self.formatFailure(playerItem.error), stream: stream)
             return
         }
     }
@@ -451,6 +464,8 @@ struct PreviewView: View {
 
     /// The address of a route on its engine's local server. The server starts only when a route needs it.
     private func address(_ route: StreamRoute) async -> URL? {
+        // A closed window released the server: a late step of its load must not start it again.
+        guard !Task.isCancelled, !invalidated else { return nil }
         if !isStreaming {
             isStreaming = true
             app.streamingClients += 1
@@ -478,18 +493,41 @@ struct PreviewView: View {
         return (nil, "The stream gives no data (" + failures.joined(separator: "; ") + ").")
     }
 
+    /// A stream for another player app, or why none works. That app keeps the address in its
+    /// history: the link's own route goes first, because its address has no file key.
+    private func externalStream(_ routes: [StreamRoute]) async -> (url: URL?, reason: String) {
+        let check = await workingRoute(routes.reversed())
+        guard let route = check.route, let url = await address(route) else {
+            return (nil, check.route == nil ? check.reason : "The local stream did not start.")
+        }
+        return (url, "")
+    }
+
+    /// .ts and .mts are also TypeScript. A video starts with the MPEG-TS sync byte 0x47, or
+    /// has it after a 4-byte time code (AVCHD).
+    private func isTypeScript(_ item: NodeItem, routes: [StreamRoute]) async -> Bool {
+        guard ["ts", "mts"].contains(item.fileExtension), let route = routes.first,
+              let url = await address(route), let head = await Self.read(url, bytes: 5).data else { return false }
+        return head.first != 0x47 && head.dropFirst(4).first != 0x47
+    }
+
     private static let probeSession = URLSession(configuration: .ephemeral)
 
     /// Asks a stream for its first byte. Nil when it comes.
     private static func probe(_ url: URL) async -> String? {
+        await read(url, bytes: 1).failure
+    }
+
+    /// The first bytes of a stream, or why they do not come.
+    private static func read(_ url: URL, bytes: Int) async -> (data: Data?, failure: String?) {
         var request = URLRequest(url: url, timeoutInterval: 15)
-        request.setValue("bytes=0-0", forHTTPHeaderField: "Range")
+        request.setValue("bytes=0-\(bytes - 1)", forHTTPHeaderField: "Range")
         do {
             let (data, response) = try await probeSession.data(for: request)
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-            return (200..<300).contains(status) && !data.isEmpty ? nil : "HTTP \(status)"
+            return (200..<300).contains(status) && !data.isEmpty ? (data, nil) : (nil, "HTTP \(status)")
         } catch {
-            return (error as? URLError)?.code == .timedOut ? "no data in 15 s" : error.localizedDescription
+            return (nil, (error as? URLError)?.code == .timedOut ? "no data in 15 s" : error.localizedDescription)
         }
     }
 
@@ -571,12 +609,13 @@ nonisolated final class PreviewDownload: NSObject, MEGATransferDelegate, @unchec
         AppPaths.removeAll(at: directory)
     }
 
+    /// `asText` adds ".txt" to the name, for a text file whose extension Quick Look takes as another type.
     @MainActor
-    func run(sdk: MEGASdk, node: MEGANode,
+    func run(sdk: MEGASdk, node: MEGANode, asText: Bool = false,
              progress: @escaping @MainActor @Sendable (Double) -> Void) async throws -> URL {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
                                                attributes: [.posixPermissions: 0o700])
-        let name = LocalFileSafety.filename(node.name ?? "Preview")
+        let name = LocalFileSafety.filename(node.name ?? "Preview") + (asText ? ".txt" : "")
         lock.withLock {
             self.progress = progress
         }

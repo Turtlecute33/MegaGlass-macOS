@@ -57,7 +57,7 @@ struct InspectorView: View {
                 Text(item.name)
                     .font(.headline)
                     .textSelection(.enabled)
-                Text(item.kind.title + (item.duration > 0 ? " · " + Format.playtime(Double(item.duration)) : "")
+                Text(item.kindTitle + (item.duration > 0 ? " · " + Format.playtime(Double(item.duration)) : "")
                      + (item.isFolder ? "" : " · " + Format.bytes(item.size)))
                     .foregroundStyle(.secondary)
             }
@@ -117,7 +117,7 @@ struct InspectorView: View {
             return (parent, node.isFile() ? sdk.numberOfVersions(for: node) : 0)
         }
         guard !Task.isCancelled else { return }
-        path = details.0
+        path = details.0.map(LocalFileSafety.displayName)
         versionCount = details.1
         if item.isFolder {
             guard let node = await sdk.loadNode(handle),

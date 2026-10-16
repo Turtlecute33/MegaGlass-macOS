@@ -19,6 +19,7 @@ struct ContactsView: View {
     @State private var contacts: [ContactRow] = []
     @State private var requests: [RequestRow] = []
     @State private var inviting = false
+    @State private var confirmRemove: ContactRow?
 
     var body: some View {
         List {
@@ -58,7 +59,7 @@ struct ContactsView: View {
                         Button("Copy Email") {
                             Pasteboard.copy(contact.email)
                         }
-                        Button("Remove Contact", role: .destructive) { remove(contact) }
+                        Button("Remove Contact…", role: .destructive) { confirmRemove = contact }
                     }
                 }
             }
@@ -88,6 +89,13 @@ struct ContactsView: View {
             NameSheet(title: "Invite a Contact", action: "Send Invitation", initial: "") { email in
                 invite(email, action: .add)
             }
+        }
+        .confirmationDialog("Remove \(confirmRemove?.email ?? "this contact")?",
+                            isPresented: Binding(get: { confirmRemove != nil }, set: { if !$0 { confirmRemove = nil } }),
+                            presenting: confirmRemove) { contact in
+            Button("Remove Contact", role: .destructive) { remove(contact) }
+        } message: { _ in
+            Text("Folders that you share with this contact, and folders that this contact shares with you, stop being shared.")
         }
     }
 

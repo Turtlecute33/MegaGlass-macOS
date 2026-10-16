@@ -282,10 +282,11 @@ struct LinkSheet: View {
                     if busy {
                         ProgressView().controlSize(.small)
                     }
+                    // Not selectable: only the Copy buttons keep the keys on this Mac and out of
+                    // clipboard histories.
                     ForEach(display, id: \.self) { line in
                         Text(line)
                             .font(.callout.monospaced())
-                            .textSelection(.enabled)
                             .lineLimit(2)
                             .truncationMode(.middle)
                     }
@@ -441,6 +442,7 @@ struct VersionsSheet: View {
     @Environment(AppModel.self) private var app
     @Environment(\.dismiss) private var dismiss
     @State private var versions: [NodeItem] = []
+    @State private var confirmDelete: NodeItem?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -460,7 +462,7 @@ struct VersionsSheet: View {
                         .help("Download this version")
                     if index > 0 {
                         Button("Restore") { Task { await restore(version) } }
-                        Button(role: .destructive) { Task { await delete(version) } } label: { Image(systemName: "trash") }
+                        Button(role: .destructive) { confirmDelete = version } label: { Image(systemName: "trash") }
                             .buttonStyle(.plain)
                             .help("Delete this version")
                     }
@@ -474,6 +476,13 @@ struct VersionsSheet: View {
         }
         .padding(22)
         .task { await load() }
+        .confirmationDialog("Delete this version permanently?",
+                            isPresented: Binding(get: { confirmDelete != nil }, set: { if !$0 { confirmDelete = nil } }),
+                            presenting: confirmDelete) { version in
+            Button("Delete", role: .destructive) { Task { await delete(version) } }
+        } message: { _ in
+            Text("You cannot undo this.")
+        }
     }
 
     private func load() async {

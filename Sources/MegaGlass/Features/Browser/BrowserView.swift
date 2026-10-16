@@ -33,6 +33,7 @@ struct BrowserView: View {
     @State private var sheet: BrowserSheet?
     @State private var confirmDelete: [UInt64]?
     @State private var confirmEmpty = false
+    @State private var confirmRemoveLinks: [UInt64]?
     @State private var dropTargeted = false
 
     private var settings: AppSettings { app.settings }
@@ -79,7 +80,7 @@ struct BrowserView: View {
             }
             .onDeleteCommand {
                 let ids = Array(model.selection)
-                guard !ids.isEmpty, isAccount, model.canWrite else { return }
+                guard !ids.isEmpty, isAccount, model.canModify else { return }
                 if model.isRubbish { confirmDelete = ids } else { Task { await app.moveToRubbish(ids) } }
             }
             .focusedSceneValue(\.browser, model)
@@ -96,6 +97,16 @@ struct BrowserView: View {
                 Button("Empty Rubbish Bin", role: .destructive) { Task { await app.emptyRubbishBin() } }
             } message: {
                 Text("All items in the Rubbish Bin will be deleted permanently.")
+            }
+            .confirmationDialog(confirmRemoveLinks?.count == 1 ? "Remove the link?" : "Remove \(confirmRemoveLinks?.count ?? 0) links?",
+                                isPresented: Binding(get: { confirmRemoveLinks != nil }, set: { if !$0 { confirmRemoveLinks = nil } }),
+                                presenting: confirmRemoveLinks) { ids in
+                Button(ids.count == 1 ? "Remove Link" : "Remove Links", role: .destructive) {
+                    Task { await app.removeLinks(ids) }
+                }
+            } message: { ids in
+                Text(ids.count == 1 ? "People who have the link can no longer open the item. A new link has a different address."
+                                    : "People who have the links can no longer open the items. New links have different addresses.")
             }
     }
 
@@ -298,12 +309,12 @@ struct BrowserView: View {
                 Button("Restore") { Task { await app.restore(items) } }
                 Button("Delete Permanently…", role: .destructive) { confirmDelete = handles }
             } else {
-                let owned = model.canWrite
+                let owned = model.canModify
                 Divider()
                 Button("Copy Link") { Task { await app.copyLinks(handles) } }
                 Button("Manage Link…") { sheet = .link(items) }
                 if items.contains(where: \.isExported) {
-                    Button("Remove Link") { Task { await app.removeLinks(handles.filter { id in items.first { $0.id == id }?.isExported == true }) } }
+                    Button("Remove Link…") { confirmRemoveLinks = items.filter(\.isExported).map(\.id) }
                 }
                 if single, first.isFolder, model.location != .incomingShares {
                     Button("Share Folder…") { sheet = .share(first) }

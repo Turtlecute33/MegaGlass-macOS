@@ -228,9 +228,14 @@ private struct TwoFactorSetupSheet: View {
                     .frame(width: 180, height: 180)
                     .padding(10)
                     .background(.white, in: .rect(cornerRadius: 12))
-                Text(secret)
-                    .font(.caption.monospaced())
-                    .textSelection(.enabled)
+                // Not selectable: the Copy button keeps the secret on this Mac and out of
+                // clipboard histories.
+                HStack(spacing: 8) {
+                    Text(secret)
+                        .font(.caption.monospaced())
+                    Button("Copy") { Pasteboard.copy(secret) }
+                        .controlSize(.small)
+                }
             } else {
                 ProgressView().frame(height: 200)
             }

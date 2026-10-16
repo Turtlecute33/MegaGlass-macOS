@@ -95,6 +95,25 @@ CGImageRef copyPDFFrame(NSURL *url)
     return image;
 }
 
+// Reads a premultiplied RGBA context: true when a pixel is not fully opaque.
+bool hasTransparentPixels(CGContextRef context)
+{
+    const uint8_t *pixels = (const uint8_t *)CGBitmapContextGetData(context);
+    if (!pixels) return true;
+    size_t width = CGBitmapContextGetWidth(context);
+    size_t height = CGBitmapContextGetHeight(context);
+    size_t stride = CGBitmapContextGetBytesPerRow(context);
+    for (size_t y = 0; y < height; ++y)
+    {
+        const uint8_t *row = pixels + y * stride;
+        for (size_t x = 0; x < width; ++x)
+        {
+            if (row[x * 4 + 3] != 255) return true;
+        }
+    }
+    return false;
+}
+
 } // namespace
 
 MGGfxProcessor::~MGGfxProcessor()
@@ -146,7 +165,11 @@ int MGGfxProcessor::getBitmapDataSize(int width, int height, int px, int py, int
 
     @autoreleasepool
     {
-        BOOL png = hint == GFX_HINT_FORMAT_PNG;
+        // The SDK allows PNG for every thumbnail. As in the SDK's FreeImage processor, only
+        // transparent images use it: opaque photos are much smaller as JPEG.
+        CGImageAlphaInfo alpha = CGImageGetAlphaInfo(mImage);
+        BOOL png = hint == GFX_HINT_FORMAT_PNG && alpha != kCGImageAlphaNone
+            && alpha != kCGImageAlphaNoneSkipLast && alpha != kCGImageAlphaNoneSkipFirst;
         CGColorSpaceRef space = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
         CGContextRef context = CGBitmapContextCreate(nullptr, (size_t)rw, (size_t)rh, 8, 0, space,
                                                      (CGBitmapInfo)(png ? kCGImageAlphaPremultipliedLast
@@ -158,6 +181,8 @@ int MGGfxProcessor::getBitmapDataSize(int width, int height, int px, int py, int
         // Core Graphics uses a bottom-left origin.
         CGContextSetInterpolationQuality(context, kCGInterpolationHigh);
         CGContextDrawImage(context, CGRectMake(-px, py + rh - height, width, height), mImage);
+        // Some decoders (HEIC) give an alpha channel also for opaque photos.
+        if (png && !hasTransparentPixels(context)) png = NO;
         CGImageRef result = CGBitmapContextCreateImage(context);
         CGContextRelease(context);
         if (!result) return 0;
@@ -196,8 +221,11 @@ void MGGfxProcessor::freeBitmap()
 
 const char *MGGfxProcessor::supportedImageFormats()
 {
+    // The SDK makes thumbnails and previews only for these names. readBitmap sends the
+    // videos to AVFoundation.
     return ".jpg.jpeg.jpe.png.gif.bmp.tif.tiff.heic.heif.hif.webp.avif.jp2.j2k.psd.ico.icns.tga.exr.pdf."
-           "dng.cr2.cr3.crw.nef.nrw.arw.srf.sr2.raf.orf.rw2.pef.srw.3fr.erf.mrw.raw.";
+           "dng.cr2.cr3.crw.nef.nrw.arw.srf.sr2.raf.orf.rw2.pef.srw.3fr.erf.mrw.raw."
+           "mp4.m4v.mov.3gp.3g2.";
 }
 
 const char *MGGfxProcessor::supportedVideoFormats()

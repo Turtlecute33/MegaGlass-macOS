@@ -544,6 +544,28 @@ struct BrowserTests {
         folder.stop()
     }
 
+    @Test func readWriteAccessCanUploadButNotModify() async throws {
+        var listing = Listing()
+        listing.setAccess(.accessRead)
+        #expect(!listing.canWrite && !listing.canModify)
+        listing.setAccess(.accessReadWrite)
+        #expect(listing.canWrite && !listing.canModify)
+        listing.setAccess(.accessFull)
+        #expect(listing.canWrite && listing.canModify)
+        listing.setAccess(.accessOwner)
+        #expect(listing.canWrite && listing.canModify)
+
+        let (engine, root) = try makeEngine(kind: .account)
+        defer { engine.shutdown(); try? FileManager.default.removeItem(at: root) }
+        var shared = Listing()
+        shared.setAccess(.accessReadWrite)
+        let share = BrowserModel(engine: engine, start: .folder(3), listingProvider: { [shared] _, _, _ in shared })
+        #expect(await eventually { !share.isLoading && share.canWrite })
+        #expect(share.canUpload)
+        #expect(!share.canModify)
+        share.stop()
+    }
+
     @Test func largeFolderSortIsStrictAndDeterministic() {
         let items = (0..<10_000).map { NodeItem(id: UInt64($0), name: "Same", size: Int64($0 % 3)) }
         for key in SortKey.allCases {
@@ -1043,14 +1065,18 @@ struct SDKRequestBoundaryTests {
 
 
 nonisolated private func pixelPNG() throws -> Data {
-    let context = try #require(CGContext(data: nil, width: 1, height: 1, bitsPerComponent: 8,
-                                        bytesPerRow: 4, space: CGColorSpaceCreateDeviceRGB(),
+    try encodedImage("public.png")
+}
+
+nonisolated private func encodedImage(_ type: String, width: Int = 1, height: Int = 1) throws -> Data {
+    let context = try #require(CGContext(data: nil, width: width, height: height, bitsPerComponent: 8,
+                                        bytesPerRow: 4 * width, space: CGColorSpaceCreateDeviceRGB(),
                                         bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
     context.setFillColor(CGColor(red: 1, green: 0, blue: 0, alpha: 1))
-    context.fill(CGRect(x: 0, y: 0, width: 1, height: 1))
+    context.fill(CGRect(x: 0, y: 0, width: width, height: height))
     let image = try #require(context.makeImage())
     let data = NSMutableData()
-    let destination = try #require(CGImageDestinationCreateWithData(data, "public.png" as CFString, 1, nil))
+    let destination = try #require(CGImageDestinationCreateWithData(data, type as CFString, 1, nil))
     CGImageDestinationAddImage(destination, image, nil)
     #expect(CGImageDestinationFinalize(destination))
     return data as Data
@@ -1127,6 +1153,48 @@ struct ThumbnailTests {
             fetchAttribute: { _, _, _, url in try await writer.write(url) })
         #expect(await restored.thumbnail(42) != nil)
         #expect(await writer.count == 1)
+    }
+
+    @Test func attributesDecodeOnlyMEGATypesWithinSize() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "megaglass-tests-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        func file(_ data: Data) throws -> URL {
+            // The cache names every attribute .jpg: the content decides the type.
+            let url = root.appending(path: UUID().uuidString + ".jpg")
+            try data.write(to: url)
+            return url
+        }
+        for type in ["public.jpeg", "public.png"] {
+            let url = try file(encodedImage(type))
+            #expect(ThumbnailStore.decodeAttribute(url, preview: false) != nil)
+            #expect(ThumbnailStore.decodeAttribute(url, preview: true) != nil)
+        }
+        for type in ["public.tiff", "com.compuserve.gif", "com.microsoft.bmp"] {
+            let url = try file(encodedImage(type))
+            #expect(ThumbnailStore.decodeAttribute(url, preview: false) == nil)
+            #expect(ThumbnailStore.decodeAttribute(url, preview: true) == nil)
+            // Full images that the user opens can have any type.
+            #expect(ThumbnailStore.decode(url, maxPixelSize: 64) != nil)
+        }
+        let wide = try file(encodedImage("public.png", width: 2000))
+        #expect(ThumbnailStore.decodeAttribute(wide, preview: false) == nil)
+        #expect(ThumbnailStore.decodeAttribute(wide, preview: true) != nil)
+        let huge = try file(encodedImage("public.png", width: 1, height: 5000))
+        #expect(ThumbnailStore.decodeAttribute(huge, preview: true) == nil)
+        #expect(ThumbnailStore.decodeAttribute(try file(Data("not an image".utf8)), preview: false) == nil)
+    }
+
+    @Test func otherImageTypeIsNotShownOrCached() async throws {
+        let (engine, root) = try makeEngine()
+        defer { engine.shutdown(); try? FileManager.default.removeItem(at: root) }
+        let writer = AttributeWriter(image: try encodedImage("public.tiff"))
+        let store = ThumbnailStore(sdk: engine.sdk, directory: root.appending(path: "isolated-cache"),
+                                   fetchAttribute: { _, _, _, url in try await writer.write(url) })
+        #expect(await store.thumbnail(42) == nil)
+        #expect(store.cached(42) == nil)
+        #expect(await store.thumbnail(42) == nil)
+        #expect(await writer.count == 2)
     }
 }
 

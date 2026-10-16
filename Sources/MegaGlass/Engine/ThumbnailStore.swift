@@ -2,6 +2,7 @@ import CoreGraphics
 import Foundation
 import ImageIO
 @preconcurrency import MEGASdk
+import UniformTypeIdentifiers
 
 /// Thumbnails (240 px) and previews (1000 px) that MEGA stores encrypted next to each file.
 /// Two cache levels: decoded images in memory, decrypted JPEG files on disk.
@@ -40,6 +41,14 @@ nonisolated final class ThumbnailStore: @unchecked Sendable {
     /// One caller of `load`; it leaves its entry once (finish or cancel). Changes under `lock`.
     private final class Waiter: @unchecked Sendable {
         var left = false
+    }
+    /// The engine cancel stops every fetch of the image, also a newer one for the same cell.
+    /// Only a fetch that started its request sends it, and only after the start.
+    private final class AttributeRequest: @unchecked Sendable {
+        private let lock = NSLock()
+        private var started = false
+        func start(_ body: () -> Void) { lock.withLock { started = true; body() } }
+        func cancel(_ body: () -> Void) { lock.withLock { if started { body() } } }
     }
     private let directory: URL
     private let fetchAttribute: (@Sendable (UInt64, MEGANode?, Bool, URL) async throws -> Void)?
@@ -141,7 +150,7 @@ nonisolated final class ThumbnailStore: @unchecked Sendable {
     private func fetch(_ handle: UInt64, key: String, node: MEGANode?, preview: Bool, generation: Generation) async -> CGImage? {
         let file = generation.directory.appending(path: key + ".jpg")
         if FileManager.default.fileExists(atPath: file.path),
-           let image = Self.decode(file, maxPixelSize: preview ? 2048 : 480) {
+           let image = Self.decodeAttribute(file, preview: preview) {
             return lock.withLock {
                 guard generation === self.generation else { return nil }
                 if !preview { memory.setObject(Box(image), forKey: NSNumber(value: handle), cost: image.bytesPerRow * image.height) }
@@ -154,17 +163,24 @@ nonisolated final class ThumbnailStore: @unchecked Sendable {
             if let fetchAttribute {
                 try await fetchAttribute(handle, node, preview, staging)
             } else {
-                guard let node = node ?? sdk.node(forHandle: handle) else { return nil }
+                var found = node
+                if found == nil { found = await sdk.loadNode(handle) }
+                guard let node = found else { return nil }
+                let request = AttributeRequest()
                 _ = try await withTaskCancellationHandler {
                     try await sdk.request { delegate in
-                        if preview {
-                            sdk.getPreviewNode(node, destinationFilePath: staging.path, delegate: delegate)
-                        } else {
-                            sdk.getThumbnailNode(node, destinationFilePath: staging.path, delegate: delegate)
+                        request.start {
+                            if preview {
+                                sdk.getPreviewNode(node, destinationFilePath: staging.path, delegate: delegate)
+                            } else {
+                                sdk.getThumbnailNode(node, destinationFilePath: staging.path, delegate: delegate)
+                            }
                         }
                     }
                 } onCancel: {
-                    if preview { sdk.cancelGetPreviewNode(node) } else { sdk.cancelGetThumbnailNode(node) }
+                    request.cancel {
+                        if preview { sdk.cancelGetPreviewNode(node) } else { sdk.cancelGetThumbnailNode(node) }
+                    }
                 }
             }
             // Publish a disk-cache entry only after SDK success. A crash or a failed
@@ -175,7 +191,7 @@ nonisolated final class ThumbnailStore: @unchecked Sendable {
             AppPaths.removeAll(at: staging)
             return nil
         }
-        guard let image = Self.decode(file, maxPixelSize: preview ? 2048 : 480) else {
+        guard let image = Self.decodeAttribute(file, preview: preview) else {
             AppPaths.removeAll(at: file)
             return nil
         }
@@ -188,9 +204,30 @@ nonisolated final class ThumbnailStore: @unchecked Sendable {
         }
     }
 
-    /// Decodes now (not at first draw), so the main thread never decodes JPEG data.
+    /// The image types that MEGA apps write for thumbnails and previews.
+    static let attributeTypes: Set<String> = [UTType.jpeg.identifier, UTType.png.identifier, UTType.webP.identifier]
+
+    /// The uploader of a file sets its thumbnail and preview, so these files can come from
+    /// anybody. Only the types that MEGA apps write are decoded, and the size is checked
+    /// before the pixels are decoded.
+    static func decodeAttribute(_ url: URL, preview: Bool) -> CGImage? {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let type = CGImageSourceGetType(source) as String?, attributeTypes.contains(type),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = properties[kCGImagePropertyPixelWidth] as? Int,
+              let height = properties[kCGImagePropertyPixelHeight] as? Int,
+              width > 0, height > 0, max(width, height) <= (preview ? 4096 : 1024)
+        else { return nil }
+        return thumbnail(of: source, maxPixelSize: preview ? 2048 : 480)
+    }
+
     static func decode(_ url: URL, maxPixelSize: Int) -> CGImage? {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
+        return thumbnail(of: source, maxPixelSize: maxPixelSize)
+    }
+
+    /// Decodes now (not at first draw), so the main thread never decodes JPEG data.
+    private static func thumbnail(of source: CGImageSource, maxPixelSize: Int) -> CGImage? {
         let options: [CFString: Any] = [
             kCGImageSourceCreateThumbnailFromImageAlways: true,
             kCGImageSourceCreateThumbnailWithTransform: true,

@@ -44,9 +44,17 @@ nonisolated struct Listing: Sendable {
     var items: [NodeItem] = []
     var crumbs: [(Location, String)] = []
     var canWrite = false
+    var canModify = false
     var isRubbish = false
     var missing = false
     var errorMessage: String?
+
+    /// Read and write access is enough for uploads and new folders. Rename, move and the
+    /// Rubbish Bin need full access: MEGA refuses them with read and write access.
+    mutating func setAccess(_ access: MEGAShareType) {
+        canWrite = access == .accessReadWrite || access == .accessFull || access == .accessOwner
+        canModify = access == .accessFull || access == .accessOwner
+    }
 }
 
 /// Navigation and contents for one browser (a window, or an open folder link).
@@ -61,6 +69,7 @@ final class BrowserModel {
     private(set) var errorMessage: String?
     private(set) var isLoading = false
     private(set) var canWrite = false
+    private(set) var canModify = false
     private(set) var isRubbish = false
     private(set) var isSearching = false
     var selection: Set<UInt64> = []
@@ -168,6 +177,7 @@ final class BrowserModel {
         itemIDs = []
         crumbs = []
         canWrite = false
+        canModify = false
         isRubbish = false
         selection.removeAll()
         if !searchText.isEmpty { searchText = "" }
@@ -233,6 +243,7 @@ final class BrowserModel {
         itemIDs = Set(listing.items.map(\.id))
         crumbs = listing.crumbs.map { Crumb(location: $0.0, title: $0.1) }
         canWrite = listing.canWrite
+        canModify = listing.canModify
         isRubbish = listing.isRubbish
         selection.formIntersection(itemIDs)
         isLoading = false
@@ -372,8 +383,7 @@ final class BrowserModel {
             }
             listing.items = sdk.nodes(sdk.children(forParent: folder, order: order.rawValue)).map { item($0, sdk: sdk) }
             listing.crumbs = crumbs(for: folder, sdk: sdk, rootTitle: rootTitle)
-            let access = sdk.accessLevel(for: folder)
-            listing.canWrite = access == .accessReadWrite || access == .accessFull || access == .accessOwner
+            listing.setAccess(sdk.accessLevel(for: folder))
             listing.isRubbish = folder.type == .rubbish || sdk.isNode(inRubbish: folder)
         case .incomingShares:
             listing.items = sdk.nodes(sdk.inShares()).map { item($0, sdk: sdk) }

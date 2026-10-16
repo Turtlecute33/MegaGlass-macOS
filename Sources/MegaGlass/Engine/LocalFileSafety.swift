@@ -27,17 +27,16 @@ nonisolated enum LocalFileSafety {
         return shortened(cleaned)
     }
 
-    /// A name has at most 255 UTF-8 bytes. The SDK writes it decomposed, and APFS allows 255
-    /// UTF-16 units of that form. A longer name keeps its extension, and room stays for the
-    /// " (2)" that the SDK adds when the name is already in use.
+    /// The SDK writes a name decomposed. APFS, HFS+, exFAT, FAT and NTFS allow 255 UTF-16 units
+    /// of that form. A longer name keeps its extension, and room stays for the " (2)" that the
+    /// SDK adds when the name is already in use.
     private static func shortened(_ name: String, limit: Int = 240) -> String {
-        func size(_ text: String) -> (bytes: Int, units: Int) {
+        func size(_ text: String) -> Int {
             // On exFAT, FAT, NTFS and network disks, the SDK writes each of these as "%xx".
             let escaped = 2 * text.unicodeScalars.count(where: { #"\?"<>|*"#.unicodeScalars.contains($0) })
-            return (text.utf8.count + escaped, text.decomposedStringWithCanonicalMapping.utf16.count + escaped)
+            return text.decomposedStringWithCanonicalMapping.utf16.count + escaped
         }
-        let total = size(name)
-        guard total.bytes > limit || total.units > limit else { return name }
+        guard size(name) > limit else { return name }
         let ext = (name as NSString).pathExtension
         let suffix = ext.isEmpty || ext.utf8.count > 16 ? "" : "." + ext
         var used = size(suffix)
@@ -45,8 +44,8 @@ nonisolated enum LocalFileSafety {
         // Whole characters from the start, while they fit: one pass, also for a very long name.
         for character in suffix.isEmpty ? name : String(name.dropLast(suffix.count)) {
             let next = size(String(character))
-            guard used.bytes + next.bytes <= limit, used.units + next.units <= limit else { break }
-            used = (used.bytes + next.bytes, used.units + next.units)
+            guard used + next <= limit else { break }
+            used += next
             stem.append(character)
         }
         return stem.isEmpty ? "Untitled" + suffix : stem + suffix

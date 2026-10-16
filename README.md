@@ -145,9 +145,10 @@ screenshot driver are separate tools; the screenshot driver uses a saved account
   that `build-app.sh` uses; back up `~/.config/megaglass/macos-signing.keychain-db`. macOS asks
   before `build-app.sh` reads the keychain password (click Allow, not Always Allow), and the
   signing keychain locks again after the build. For a signing keychain made by an older
-  `make-signing-identity.zsh`, do this once: in Keychain Access, open the item
-  `megaglass-macos-signing`, select Access Control, select "Confirm before allowing access", and
-  remove `security` from the list. For a
+  `make-signing-identity.zsh`, do this once: in Keychain Access (login keychain), open the item
+  "MegaGlass macOS signing keychain" (Where: `megaglass-macos-signing`), select Access Control,
+  select "Confirm before allowing access", remove `security` from the list, and click Save
+  Changes. For a
   notarized app, set `MEGAGLASS_SIGN_IDENTITY` (a Developer ID Application identity) and
   `MEGAGLASS_NOTARY_PROFILE` (a `notarytool store-credentials` profile).
 - With no identity, the app is signed ad hoc. After each rebuild, macOS can ask once for

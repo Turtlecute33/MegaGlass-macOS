@@ -62,6 +62,8 @@ final class AppModel {
     var pendingLinks: PendingLinks?
     /// Preview windows that stream from the local HTTP server.
     var streamingClients = 0
+    /// Open preview windows for each engine ID. A folder link with one keeps its engine.
+    @ObservationIgnored var previewEngines: [String: Int] = [:]
     /// Opens the main window, or brings it to the front (set by the app menus).
     @ObservationIgnored var openMainWindow: (() -> Void)?
 
@@ -84,6 +86,7 @@ final class AppModel {
         syncs = SyncCenter(engine: engine)
         links = LinkCenter()
         bypass = BypassCenter(settings: settings)
+        links.isInUse = { [weak self] id in (self?.previewEngines[id] ?? 0) > 0 }
 
         session.onError = { [weak self] error in self?.show(error, title: "Session operation failed") }
         transfers.onError = { [weak self] error in self?.show(error, title: "Transfer operation failed") }
@@ -97,11 +100,8 @@ final class AppModel {
                 let shown = chosen.links.prefix(LinkCenter.openLimit)
                 // In the background: the window stays on Bypass while the links open.
                 let opened = self.links.open(text: shown.joined(separator: "\n"), account: engine, workerThreads: settings.workerThreads)
-                let text = shown.count < links.count
-                    ? (chosen.bySize ? "The \(opened.count) largest of \(links.count) MEGA links open in Open Links"
-                        : "\(opened.count) of \(links.count) MEGA links open in Open Links")
-                    : opened.count == 1 ? "1 MEGA link opens in Open Links" : "\(opened.count) MEGA links open in Open Links"
-                notify(text, symbol: "link")
+                notify(Self.bypassOpenedText(links: links, shown: Array(shown), opened: opened.count, bySize: chosen.bySize),
+                       symbol: "link")
             }
         }
         bypass.onNeedsYou = { [weak self] host in
@@ -133,6 +133,14 @@ final class AppModel {
             if item.state == .failed, let message = item.errorMessage {
                 self?.notify("\(item.name): \(message)", symbol: "exclamationmark.triangle")
             }
+        }
+        engine.onAccountNotice = { [weak self] reason in
+            let title = "Your MEGA account needs verification"
+            // Each failed request can repeat the notice: one alert at a time.
+            guard let self, alert?.title != title else { return }
+            alert = AlertItem(title: title,
+                              message: reason ?? "MEGA suspended your account until you verify it. Follow the steps in the email from MEGA.")
+            showMainWindow()
         }
         engine.onFatalError = { [weak self] reason in
             guard let self, let message = MegaFailure.fatalErrorMessage(reason: reason) else { return }
@@ -171,6 +179,18 @@ final class AppModel {
             session.isGuest = true
             if let message = session.startupMessage { alert = AlertItem(title: "You are not logged in", message: message) }
         }
+    }
+
+    /// The toast after Bypass opens `opened` links: `shown` of the `links` it found.
+    static func bypassOpenedText(links: [String], shown: [String], opened: Int, bySize: Bool) -> String {
+        guard shown.count < links.count else {
+            return opened == 1 ? "1 MEGA link opens in Open Links" : "\(opened) MEGA links open in Open Links"
+        }
+        guard bySize else { return "\(opened) of \(links.count) MEGA links open in Open Links" }
+        // Links with a password have no size: they open apart from the largest.
+        let locked = shown.count(where: LinkParser.isPasswordProtected)
+        return "The \(opened - locked) largest of \(links.count - locked) MEGA links"
+            + (locked > 0 ? ", and \(locked) with a password," : "") + " open in Open Links"
     }
 
     func engine(id: String) -> MegaEngine? {

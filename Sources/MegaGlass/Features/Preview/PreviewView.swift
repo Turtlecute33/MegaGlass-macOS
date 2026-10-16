@@ -25,6 +25,8 @@ struct PreviewView: View {
     @State private var seekHide: Task<Void, Never>?
     @State private var playingElsewhere = false
     @State private var invalidated = false
+    /// This window counts in `AppModel.previewEngines` for this engine ID.
+    @State private var usedEngine: String?
     @FocusState private var focused: Bool
 
     /// Above this size, a preview asks first: it must decrypt the whole file.
@@ -87,7 +89,7 @@ struct PreviewView: View {
             .onChange(of: app.session.generation) {
                 if request?.engineID == app.engine.id { invalidate() }
             }
-            .onChange(of: app.links.sessions.map(\.id)) {
+            .onChange(of: app.links.sessions.map { $0.engine?.id }) {
                 if let request, app.engine(id: request.engineID) == nil { invalidate() }
             }
             .onDisappear(perform: stop)
@@ -256,6 +258,10 @@ struct PreviewView: View {
         guard let request, let engine = app.engine(id: request.engineID) else {
             state = .failed("The file is not available.")
             return
+        }
+        if usedEngine == nil, !Task.isCancelled, !invalidated {
+            usedEngine = request.engineID
+            app.previewEngines[request.engineID, default: 0] += 1
         }
         let sdk = engine.sdk
         // Node reads take the engine lock: not on the main thread.
@@ -564,6 +570,11 @@ struct PreviewView: View {
         download = nil
         seekHide?.cancel()
         releaseStream()
+        if let usedEngine {
+            self.usedEngine = nil
+            let count = (app.previewEngines[usedEngine] ?? 1) - 1
+            app.previewEngines[usedEngine] = count > 0 ? count : nil
+        }
     }
 
     /// The local server runs only while a window plays media: it serves decrypted data.

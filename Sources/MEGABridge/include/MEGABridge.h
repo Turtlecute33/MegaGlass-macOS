@@ -30,6 +30,9 @@ NS_ASSUME_NONNULL_BEGIN
 + (void)mg_setFolderDownloadNameFilter:(NSString * (NS_SWIFT_SENDABLE ^)(NSString *name))filter
     NS_SWIFT_NAME(setFolderDownloadNameFilter(_:));
 
+/// The file name extensions, as "jpg", that the engines make thumbnails and previews for.
+@property (class, nonatomic, readonly) NSArray<NSString *> *mg_thumbnailExtensions NS_SWIFT_NAME(thumbnailExtensions);
+
 @end
 
 @interface MEGATransfer (MGBridge)

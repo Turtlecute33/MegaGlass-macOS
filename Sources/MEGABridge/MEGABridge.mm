@@ -165,6 +165,13 @@ MegaRequestListener *completionListener(MGRequestCompletion completion)
     mega::setFolderDownloadNameFilter(folderDownloadName);
 }
 
++ (NSArray<NSString *> *)mg_thumbnailExtensions
+{
+    MGGfxProcessor processor;
+    NSArray<NSString *> *parts = [@(processor.supportedImageFormats()) componentsSeparatedByString:@"."];
+    return [parts filteredArrayUsingPredicate:[NSPredicate predicateWithFormat:@"length > 0"]];
+}
+
 @end
 
 #pragma mark - Value objects

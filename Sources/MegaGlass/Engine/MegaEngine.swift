@@ -23,8 +23,16 @@ nonisolated enum EngineEvent: Sendable {
     case reloadNeeded
     /// MEGA ended the session (with the reason to show, when there is one).
     case sessionExpired(String?)
+    /// MEGA blocked the account until you verify it. The session stays.
+    case accountNotice(String?)
     /// The engine could not use its local database and stopped the syncs (an SDK reason code).
     case fatalError(Int)
+
+    /// A block of the account. Until you verify your email (700) or phone (500), the engine
+    /// keeps the session; for the other codes it logs out.
+    static func accountBlocked(code: Int, reason: String?) -> EngineEvent {
+        code == 500 || code == 700 ? .accountNotice(reason) : .sessionExpired(reason)
+    }
 }
 
 /// One MEGA engine instance: the account, or one open folder link.
@@ -44,6 +52,7 @@ final class MegaEngine {
     private(set) var contactsRevision = 0
     private(set) var accountRevision = 0
     @ObservationIgnored var onSessionExpired: ((String?) -> Void)?
+    @ObservationIgnored var onAccountNotice: ((String?) -> Void)?
     @ObservationIgnored var onReloadNeeded: (() -> Void)?
     @ObservationIgnored var onFatalError: ((Int) -> Void)?
 
@@ -90,6 +99,7 @@ final class MegaEngine {
         sdk.remove(events as any MEGARequestDelegate)
         onReloadNeeded = nil
         onSessionExpired = nil
+        onAccountNotice = nil
         onFatalError = nil
     }
 
@@ -106,6 +116,8 @@ final class MegaEngine {
             onReloadNeeded?()
         case let .sessionExpired(reason):
             onSessionExpired?(reason)
+        case let .accountNotice(reason):
+            onAccountNotice?(reason)
         case let .fatalError(reason):
             onFatalError?(reason)
         }
@@ -142,7 +154,7 @@ nonisolated private final class EngineEvents: NSObject, MEGAGlobalDelegate, MEGA
     func onEvent(_ api: MEGASdk, event: MEGAEvent) {
         switch event.type {
         case .accountBlocked:
-            deliver?(.sessionExpired(event.text))
+            deliver?(.accountBlocked(code: event.number, reason: event.text))
         case .fatalError:
             deliver?(.fatalError(event.number))
         default:

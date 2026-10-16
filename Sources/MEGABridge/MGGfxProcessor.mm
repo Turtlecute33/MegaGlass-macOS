@@ -31,7 +31,9 @@ CGImageRef copyImageFrame(NSURL *url)
 
 CGImageRef copyVideoFrame(NSURL *url)
 {
-    AVURLAsset *asset = [AVURLAsset URLAssetWithURL:url options:nil];
+    // A movie can refer to other local media files: their frames must not become the thumbnail.
+    AVURLAsset *asset = [AVURLAsset URLAssetWithURL:url
+                                            options:@{AVURLAssetReferenceRestrictionsKey: @(AVAssetReferenceRestrictionForbidAll)}];
     AVAssetImageGenerator *generator = [AVAssetImageGenerator assetImageGeneratorWithAsset:asset];
     generator.appliesPreferredTrackTransform = YES;
     generator.maximumSize = CGSizeMake(kMaxDecodeSize, kMaxDecodeSize);

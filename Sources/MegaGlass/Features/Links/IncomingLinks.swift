@@ -122,6 +122,7 @@ enum Pasteboard {
 final class ClipboardWatcher {
     @ObservationIgnored private var timer: Timer?
     @ObservationIgnored private var lastCount = NSPasteboard.general.changeCount
+    /// The read in progress. macOS can hold a read until you answer its alert: one at a time.
     @ObservationIgnored private var check: Task<Void, Never>?
     /// The same text again soon after is the same copy (some apps write it twice).
     @ObservationIgnored private var last: (text: String, time: ContinuousClock.Instant)?
@@ -135,8 +136,8 @@ final class ClipboardWatcher {
     func setEnabled(_ enabled: Bool) {
         timer?.invalidate()
         timer = nil
+        // The read ends by itself, then clears `check`.
         check?.cancel()
-        check = nil
         guard enabled else { return }
         lastCount = NSPasteboard.general.changeCount
         timer = Timer.scheduledTimer(withTimeInterval: 0.6, repeats: true) { [weak self] _ in
@@ -152,6 +153,8 @@ final class ClipboardWatcher {
         let pasteboard = NSPasteboard.general
         let count = pasteboard.changeCount
         guard count != lastCount else { return }
+        // A copy during a read comes at the next poll after it.
+        guard check == nil else { return }
         lastCount = count
         guard count != Pasteboard.ownChangeCount else { return }
         // Password managers and other apps mark secrets: they are not read.
@@ -164,8 +167,8 @@ final class ClipboardWatcher {
             }
             return
         }
-        check?.cancel()
         check = Task {
+            defer { check = nil }
             guard let text = await Self.copiedText(changeCount: count), !Task.isCancelled,
                   pasteboard.changeCount == count else { return }
             let now = ContinuousClock.now

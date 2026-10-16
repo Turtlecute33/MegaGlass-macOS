@@ -5,6 +5,7 @@ import ImageIO
 import Observation
 import Testing
 @preconcurrency import MEGASdk
+import MEGABridge
 @testable import MegaGlass
 
 @MainActor
@@ -338,6 +339,19 @@ struct AuthenticationTests {
         #expect(session.startupMessage == "Fixture block reason")
         #expect(credentials.token == nil)
         #expect(try FileManager.default.contentsOfDirectory(atPath: cache.path).isEmpty)
+    }
+
+    @Test func verificationBlockKeepsTheSession() {
+        func keepsSession(_ code: Int) -> Bool? {
+            switch EngineEvent.accountBlocked(code: code, reason: "Fixture") {
+            case .accountNotice("Fixture"): true
+            case .sessionExpired("Fixture"): false
+            default: nil
+            }
+        }
+        // Email (700) or SMS (500) verification unblocks the account: the session stays.
+        #expect(keepsSession(500) == true && keepsSession(700) == true)
+        for code in [0, 200, 300, 400, 401] { #expect(keepsSession(code) == false) }
     }
 
     @Test func failedAccountLoadIsShownAndNotRemembered() async throws {
@@ -762,6 +776,29 @@ struct PlatformTests {
         #expect(LinkCenter.pick(["a", locked, "b", "c"], sizes: ["a": 1, "b": 3, "c": 2], count: 2) == ["b", "c", locked])
     }
 
+    @Test func bypassToastCountsLinksWithAPasswordApart() {
+        let locked = ["https://mega.nz/#P!one", "https://mega.nz/#P!two"]
+        let links = (0..<8).map { "https://mega.nz/file/\($0)#key" } + locked
+        let shown = Array(links.prefix(3)) + locked
+        #expect(AppModel.bypassOpenedText(links: links, shown: shown, opened: 5, bySize: true)
+                == "The 3 largest of 8 MEGA links, and 2 with a password, open in Open Links")
+        #expect(AppModel.bypassOpenedText(links: Array(links.prefix(8)), shown: Array(links.prefix(3)), opened: 3, bySize: true)
+                == "The 3 largest of 8 MEGA links open in Open Links")
+        #expect(AppModel.bypassOpenedText(links: links, shown: shown, opened: 5, bySize: false)
+                == "5 of 10 MEGA links open in Open Links")
+        #expect(AppModel.bypassOpenedText(links: shown, shown: shown, opened: 5, bySize: true) == "5 MEGA links open in Open Links")
+    }
+
+    @Test func linkEnginesThatPreviewsUseKeepRunning() {
+        // Selected in this order: the first one least recently.
+        let ids = (0..<LinkCenter.engineLimit).map { _ in UUID() }
+        #expect(LinkCenter.enginesToStop(Array(ids.dropLast()), busy: [], recent: ids).isEmpty)
+        #expect(LinkCenter.enginesToStop(ids, busy: [], recent: ids) == [ids[0]])
+        #expect(LinkCenter.enginesToStop(ids, busy: [ids[0]], recent: ids) == [ids[1]])
+        // When a preview uses every engine, none stops.
+        #expect(LinkCenter.enginesToStop(ids, busy: Set(ids), recent: ids).isEmpty)
+    }
+
     @Test func queryBeforeTheKeyKeepsTheKey() {
         #expect(LinkParser.links(in: "https://mega.nz/file/AbCdEfGh?fbclid=IwAR0_x-Y#key123").map(\.0) == ["https://mega.nz/file/AbCdEfGh#key123"])
         #expect(LinkParser.links(in: "mega.nz/folder/AbCd?utm_source=x&utm_medium=y#Key/file/Sub").map(\.0) == ["https://mega.nz/folder/AbCd#Key/file/Sub"])
@@ -843,18 +880,23 @@ struct PlatformTests {
     }
 
     @Test func longRemoteNamesFitTheFileSystem() {
+        // The SDK writes names decomposed, and the file systems count UTF-16 units.
+        func units(_ name: String) -> Int { name.decomposedStringWithCanonicalMapping.utf16.count }
         let name = String(repeating: "é", count: 300) + ".mp4"
         let safe = LocalFileSafety.filename(name)
-        #expect(safe.utf8.count <= 255)
+        #expect(units(safe) <= 240)
         #expect(safe.hasSuffix(".mp4"))
         // The " (2)" that the SDK adds to a name in use still fits.
-        #expect(safe.utf8.count + " (99)".utf8.count <= 255)
+        #expect(units(safe) + " (99)".utf16.count <= 255)
         #expect(LocalFileSafety.filename("short.txt") == "short.txt")
-        // 90 CJK characters are 270 bytes: whole characters are cut, the extension stays.
-        let cjk = LocalFileSafety.filename(String(repeating: "日", count: 90) + ".pdf")
-        #expect(cjk.utf8.count <= 255 && cjk.hasPrefix("日日") && cjk.hasSuffix("日.pdf"))
+        // 90 CJK characters are 270 bytes but 90 units: the name stays whole.
+        let cjkName = String(repeating: "日", count: 90) + ".pdf"
+        #expect(LocalFileSafety.filename(cjkName) == cjkName)
+        // 300 CJK characters: whole characters are cut, the extension stays.
+        let cjk = LocalFileSafety.filename(String(repeating: "日", count: 300) + ".pdf")
+        #expect(units(cjk) == 240 && cjk.hasPrefix("日日") && cjk.hasSuffix("日.pdf"))
         let bare = LocalFileSafety.filename(String(repeating: "a", count: 400))
-        #expect(bare.utf8.count + " (99)".utf8.count <= 255 && bare.allSatisfy { $0 == "a" })
+        #expect(units(bare) + " (99)".utf16.count <= 255 && bare.allSatisfy { $0 == "a" })
         // 200 bytes, but 300 UTF-16 units when decomposed, as the SDK writes it.
         let marks = LocalFileSafety.filename(String(repeating: "\u{01D8}", count: 100) + ".txt")
         #expect(marks.hasSuffix(".txt") && marks.decomposedStringWithCanonicalMapping.utf16.count <= 240)
@@ -873,7 +915,7 @@ struct PlatformTests {
         let long = ["é", "日", "😀", "\u{01D8}", "한", "a"].map { String(repeating: $0, count: 400) + ".pdf" }
         for name in long {
             let safe = LocalFileSafety.filename(name)
-            #expect(safe.utf8.count <= 255 && safe.hasSuffix(".pdf"))
+            #expect(safe.decomposedStringWithCanonicalMapping.utf16.count <= 240 && safe.hasSuffix(".pdf"))
             // As the SDK writes it, with the suffix of a name in use.
             for leaf in [safe, (safe as NSString).deletingPathExtension + " (99).pdf"] {
                 #expect(FileManager.default.createFile(atPath: folder.appending(path: leaf).path, contents: nil))
@@ -1232,6 +1274,14 @@ struct ThumbnailTests {
         #expect(await store.thumbnail(42) == nil)
         #expect(await writer.count == 2)
     }
+
+    @Test func everyTypeWithUploadedPicturesShowsThem() {
+        let extensions = MEGASdk.thumbnailExtensions
+        #expect(extensions.contains("jpg") && extensions.contains("mov"))
+        for ext in extensions {
+            #expect(FileKind(extension: ext).hasPictures, "\(ext)")
+        }
+    }
 }
 
 @MainActor
@@ -1302,7 +1352,10 @@ struct SyncRootTests {
         // A changed disk or root folder needs a new sync: Resume fails again.
         #expect(SyncCenter.describeError(15, fallback: "Local filesystem mismatch").contains("Remove this sync"))
         #expect(SyncCenter.describeError(44, fallback: "Mismatch on sync root FSID.").contains("Remove this sync"))
-        #expect(SyncCenter.describeError(7, fallback: "Local path not available").contains("Connect the disk"))
+        for code in [7, 40] {
+            let text = SyncCenter.describeError(code, fallback: "Local path not available")
+            #expect(text.contains("Connect its disk") && text.contains("moved or renamed") && text.contains("Files and Folders"))
+        }
         #expect(SyncCenter.describeError(9, fallback: "Storage overquota") == "Storage overquota")
     }
 }

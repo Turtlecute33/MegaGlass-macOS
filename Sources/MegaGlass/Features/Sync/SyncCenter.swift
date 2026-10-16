@@ -129,7 +129,9 @@ final class SyncCenter {
     /// Text for a SyncError code that needs a step from the user, else the SDK text.
     static func describeError(_ code: Int, fallback: String) -> String {
         switch code {
-        case 7: return "The folder is not available. Connect the disk or check the network."
+        case 7, 40:
+            return "MegaGlass cannot open this folder. Connect its disk or network, check that the folder was not "
+                + "moved or renamed, and allow access in System Settings > Privacy & Security > Files and Folders."
         case 15: return "This folder is now on a different disk. Remove this sync and add it again to use the new disk."
         case 44: return "This folder was replaced by a different folder. Remove this sync and add it again."
         default: return fallback

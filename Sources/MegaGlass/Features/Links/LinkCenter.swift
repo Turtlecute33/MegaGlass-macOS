@@ -260,6 +260,8 @@ final class LinkCenter {
     static let engineLimit = 8
     /// Link IDs, the link selected last at the end.
     @ObservationIgnored private var recent: [UUID] = []
+    /// True when a window still uses the engine with this ID (a preview): it does not stop.
+    @ObservationIgnored var isInUse: (String) -> Bool = { _ in false }
     /// More links than this from a copy or from another app: the app asks first.
     static let askAbove = 10
 
@@ -326,11 +328,18 @@ final class LinkCenter {
     private func makeRoom(for session: LinkSession) {
         select(session)
         let others = sessions.filter { $0.engine != nil && $0 !== session }
-        guard others.count >= Self.engineLimit else { return }
-        let order = { (other: LinkSession) in self.recent.firstIndex(of: other.id) ?? -1 }
-        for other in others.sorted(by: { order($0) < order($1) }).prefix(others.count - Self.engineLimit + 1) {
-            other.suspend()
-        }
+        let busy = Set(others.filter { $0.engine.map { isInUse($0.id) } ?? false }.map(\.id))
+        let stopping = Self.enginesToStop(others.map(\.id), busy: busy, recent: recent)
+        for other in others where stopping.contains(other.id) { other.suspend() }
+    }
+
+    /// The running engines that stop before one more starts: of the links selected least
+    /// recently first. An engine that a window uses (`busy`) keeps running, also above the limit.
+    static func enginesToStop(_ running: [UUID], busy: Set<UUID>, recent: [UUID]) -> Set<UUID> {
+        guard running.count >= engineLimit else { return [] }
+        let order = { (id: UUID) in recent.firstIndex(of: id) ?? -1 }
+        let idle = running.filter { !busy.contains($0) }.sorted { order($0) < order($1) }
+        return Set(idle.prefix(running.count - engineLimit + 1))
     }
 
     /// Opens every MEGA link found in the text (see `LinkSession.prepare`). Returns the

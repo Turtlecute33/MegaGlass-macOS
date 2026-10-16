@@ -87,10 +87,11 @@ nonisolated enum FileKind: String, Sendable, CaseIterable {
 
     init(extension ext: String) {
         switch ext {
-        case "jpg", "jpeg", "png", "gif", "heic", "heif", "webp", "tif", "tiff", "bmp", "avif", "svg", "raw",
-             "dng", "cr2", "cr3", "nef", "arw", "raf", "orf", "rw2", "psd", "ico", "jxl":
+        case "jpg", "jpeg", "jpe", "png", "gif", "heic", "heif", "hif", "webp", "tif", "tiff", "bmp", "avif",
+             "jp2", "j2k", "svg", "raw", "dng", "cr2", "cr3", "crw", "nef", "nrw", "arw", "srf", "sr2", "raf",
+             "orf", "rw2", "pef", "srw", "3fr", "erf", "mrw", "psd", "ico", "icns", "tga", "exr", "jxl":
             self = .image
-        case "mp4", "mov", "m4v", "mkv", "avi", "webm", "wmv", "flv", "3gp", "mpg", "mpeg", "ts", "mts":
+        case "mp4", "mov", "m4v", "mkv", "avi", "webm", "wmv", "flv", "3gp", "3g2", "mpg", "mpeg", "ts", "mts":
             self = .video
         case "mp3", "m4a", "aac", "flac", "wav", "aiff", "aif", "ogg", "opus", "wma", "alac":
             self = .audio

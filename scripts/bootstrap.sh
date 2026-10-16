@@ -17,6 +17,13 @@ if [[ ! -d "$SDK_DIR/.git" ]]; then
   git -C "$SDK_DIR" remote add origin "$SDK_REPO"
 fi
 if [[ "$(git -C "$SDK_DIR" rev-parse -q --verify HEAD 2>/dev/null || true)" != "$SDK_COMMIT" ]]; then
+  # The checkout overwrites local edits: they go to the git stash of the SDK first.
+  if git -C "$SDK_DIR" rev-parse -q --verify HEAD >/dev/null; then
+    git -C "$SDK_DIR" stash push -q --include-untracked -m "bootstrap.sh $(date +%F-%T)" || {
+      print -u2 "Could not save the local edits of Vendor/mega-sdk. Nothing was changed."
+      exit 1
+    }
+  fi
   print "Fetching MEGA SDK ${SDK_COMMIT:0:10}"
   git -C "$SDK_DIR" fetch -q --depth 1 origin "$SDK_COMMIT"
   git -C "$SDK_DIR" checkout -q -f FETCH_HEAD

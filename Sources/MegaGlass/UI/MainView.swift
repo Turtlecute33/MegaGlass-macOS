@@ -204,7 +204,7 @@ struct Sidebar: View {
                     Label {
                         Text("Sync & Backup")
                     } icon: {
-                        Image(systemName: app.syncs.isStalled ? "exclamationmark.arrow.triangle.2.circlepath" : "arrow.triangle.2.circlepath")
+                        Image(systemName: app.syncs.stoppedCount > 0 || app.syncs.isStalled ? "exclamationmark.arrow.triangle.2.circlepath" : "arrow.triangle.2.circlepath")
                             .symbolEffect(.rotate, isActive: app.syncs.isSyncing)
                     }
                     .tag(SidebarItem.sync)

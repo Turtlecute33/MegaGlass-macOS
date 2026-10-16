@@ -1,0 +1,89 @@
+diff --git a/src/posix/fs.cpp b/src/posix/fs.cpp
+index a3b87c6..6084144 100644
+--- a/src/posix/fs.cpp
++++ b/src/posix/fs.cpp
+@@ -2081,10 +2081,12 @@ ScanResult PosixFileSystemAccess::directoryScan(const LocalPath& targetPath,
+     auto device = metadata.st_dev;
+ 
+     // Iterate over the directory's children.
+-    auto entry = readdir(directory);
++    // readdir() returns NULL at the end and on an error: only errno tells them apart.
+     auto path = targetPath;
++    errno = 0;
++    auto entry = readdir(directory);
+ 
+-    for ( ; entry; entry = readdir(directory))
++    for ( ; entry; errno = 0, entry = readdir(directory))
+     {
+         // Skip special hardlinks.
+         if (!strcmp(entry->d_name, "."))
+@@ -2214,9 +2216,26 @@ ScanResult PosixFileSystemAccess::directoryScan(const LocalPath& targetPath,
+         ++nFingerprinted;
+     }
+ 
++    // Latch error.
++    auto error = errno;
++
+     // We're done iterating the directory.
+     closedir(directory);
+ 
++    // A partial listing must not be taken as the folder's content:
++    // the missing entries would count as deleted.
++    if (error)
++    {
++        LOG_warn << "Failed to directoryScan: "
++                 << "Unable to list scan target: "
++                 << targetPath
++                 << ". Error code was: "
++                 << error;
++
++        results.clear();
++        return SCAN_INACCESSIBLE;
++    }
++
+     return SCAN_SUCCESS;
+ }
+ 
+diff --git a/src/sync.cpp b/src/sync.cpp
+index 3693cb4..b999897 100644
+--- a/src/sync.cpp
++++ b/src/sync.cpp
+@@ -4252,7 +4252,9 @@ void Syncs::enableSyncByBackupId_inThread(handle backupId, bool setOriginalPath,
+     bool resetFingerprint = !us.mConfig.mFilesystemFingerprint;
+ 
+ #ifdef __APPLE__
+-    if (!resetFingerprint)
++    // Only the legacy part (f_fsid) varies on Mac. A volume UUID is stable: keep it, so that
++    // a different volume at the same path fails with LOCAL_FILESYSTEM_MISMATCH.
++    if (!resetFingerprint && us.mConfig.mFilesystemFingerprint.uuid().empty())
+     {
+         LOG_debug << "turning on reset of filesystem fingerprint on Mac, as they are not consistent there";  // eg. from networked filesystem, qnap shared drive
+         resetFingerprint = true;
+@@ -7544,7 +7546,8 @@ void Syncs::resumeSyncsOnStateCurrent_inThread()
+             {
+ 
+ #ifdef __APPLE__
+-                unifiedSync->mConfig.mFilesystemFingerprint.reset(); //for certain MacOS, fsfp seems to vary when restarting. we set it to 0, so that it gets recalculated
++                if (unifiedSync->mConfig.mFilesystemFingerprint.uuid().empty())
++                    unifiedSync->mConfig.mFilesystemFingerprint.reset(); //for certain MacOS, fsfp seems to vary when restarting. we set it to 0, so that it gets recalculated
+ #endif
+                 LOG_debug << "Resuming cached sync: " << toHandle(unifiedSync->mConfig.mBackupId) << " " << unifiedSync->mConfig.getLocalPath() << " fsfp= " << unifiedSync->mConfig.mFilesystemFingerprint.toString() << " error = " << unifiedSync->mConfig.mError;
+ 
+@@ -13796,7 +13799,7 @@ void Syncs::syncLoop()
+                 if (expectedFsfp)
+                 {
+                     auto computedFsfp = fsaccess->fsFingerprint(sync->localroot->localname);
+-                    if (computedFsfp && computedFsfp != expectedFsfp)
++                    if (computedFsfp && !computedFsfp.equivalent(expectedFsfp))
+                     {
+                         LOG_err << "Local filesystem mismatch. Previous: "
+                                 << expectedFsfp.toString()
+@@ -13871,7 +13874,7 @@ void Syncs::syncLoop()
+                     //{
+                     //    LOG_err << "Sync path is available again but is not the same folder, by fsid: " << us->mConfig.mLocalPath;
+                     //}
+-                    else if (computedFsfp && expectedFsfp && computedFsfp != expectedFsfp)
++                    else if (computedFsfp && expectedFsfp && !computedFsfp.equivalent(expectedFsfp))
+                     {
+                         LOG_err << "Sync path is available again but is not the same filesystem, by id.  Old: "
+                                 << expectedFsfp.toString()

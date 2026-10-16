@@ -4,7 +4,7 @@ struct MenuBarIcon: View {
     let app: AppModel
 
     var body: some View {
-        let symbol: String = if app.syncs.isStalled {
+        let symbol: String = if app.syncs.stoppedCount > 0 || app.syncs.isStalled {
             "exclamationmark.icloud"
         } else if app.transfers.hasActivity || app.syncs.isSyncing {
             "arrow.trianglehead.2.clockwise.rotate.90.icloud"
@@ -50,7 +50,7 @@ struct MenuBarView: View {
             }
 
             if !app.syncs.syncs.isEmpty {
-                Label("\(app.syncs.syncs.count) syncs and backups · \(app.syncs.isStalled ? "need attention" : app.syncs.isSyncing ? "syncing" : "up to date")",
+                Label("\(app.syncs.syncs.count) syncs and backups · \(app.syncs.stoppedCount > 0 ? "\(app.syncs.stoppedCount) stopped" : app.syncs.isStalled ? "need attention" : app.syncs.isSyncing ? "syncing" : "up to date")",
                       systemImage: "arrow.triangle.2.circlepath")
                     .font(.caption)
             }
@@ -86,6 +86,7 @@ struct MenuBarView: View {
     }
 
     private var status: String {
+        if app.syncs.stoppedCount > 0 { return "Sync stopped" }
         if app.syncs.isStalled { return "Needs attention" }
         if app.transfers.hasActivity { return "\(app.transfers.activeCount) transfers" }
         if app.syncs.isSyncing { return "Syncing" }

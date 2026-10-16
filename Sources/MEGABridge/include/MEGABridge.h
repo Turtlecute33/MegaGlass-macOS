@@ -69,7 +69,8 @@ typedef NS_ENUM(NSInteger, MGSyncRunState) {
 
 @interface MGSyncStall : NSObject
 @property (nonatomic, readonly) NSInteger reason;
-@property (nonatomic, readonly, copy) NSString *reasonDescription;
+/// MegaSyncStall::SyncPathProblem codes of the local paths, then of the cloud paths.
+@property (nonatomic, readonly, copy) NSArray<NSNumber *> *pathProblems;
 @property (nonatomic, readonly, copy) NSArray<NSString *> *localPaths;
 @property (nonatomic, readonly, copy) NSArray<NSString *> *cloudPaths;
 @property (nonatomic, readonly) BOOL detectedCloudSide;

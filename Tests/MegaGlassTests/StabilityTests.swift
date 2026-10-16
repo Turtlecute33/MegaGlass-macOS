@@ -941,3 +941,61 @@ struct ThumbnailTests {
         #expect(await writer.count == 1)
     }
 }
+
+@MainActor
+struct SyncRootTests {
+    private let home = FileManager.default.homeDirectoryForCurrentUser
+    // Not on disk: the check falls back to the plain path.
+    private var base: URL { home.appending(path: "megaglass-sync-test-" + UUID().uuidString) }
+
+    @Test func systemAndHomeFoldersAreRefused() {
+        for folder in ["/", "/Users", "/Volumes", "/System/Library", "/Library", "/Applications/Safari.app",
+                       "/usr/local", "/tmp", "/private/var", "/etc"] {
+            #expect(SyncCenter.rootProblem(URL(filePath: folder), otherRoots: [], appFolders: []) != nil, "\(folder)")
+        }
+        #expect(SyncCenter.rootProblem(home, otherRoots: [], appFolders: []) != nil)
+        #expect(SyncCenter.rootProblem(home.appending(path: "Library"), otherRoots: [], appFolders: []) != nil)
+        #expect(SyncCenter.rootProblem(home.appending(path: "Library/LaunchAgents"), otherRoots: [], appFolders: []) != nil)
+        // Letter case and "..": the same folder.
+        let shouted = URL(filePath: home.path(percentEncoded: false).uppercased()).appending(path: "LIBRARY")
+        #expect(SyncCenter.rootProblem(shouted, otherRoots: [], appFolders: []) != nil)
+        #expect(SyncCenter.rootProblem(home.appending(path: "Documents/../Library"), otherRoots: [], appFolders: []) != nil)
+        #expect(SyncCenter.rootProblem(base.appending(path: "Documents"), otherRoots: [], appFolders: []) == nil)
+    }
+
+    @Test func symlinkToAProtectedFolderIsRefused() throws {
+        let link = FileManager.default.temporaryDirectory.appending(path: "megaglass-link-" + UUID().uuidString)
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: home.appending(path: "Library"))
+        defer { try? FileManager.default.removeItem(at: link) }
+        #expect(SyncCenter.rootProblem(link, otherRoots: [], appFolders: []) != nil)
+    }
+
+    @Test func appDataFoldersAreRefused() {
+        let base = base
+        let support = base.appending(path: "support")
+        let apps = [support, base.appending(path: "caches")]
+        #expect(SyncCenter.rootProblem(support, otherRoots: [], appFolders: apps) != nil)
+        #expect(SyncCenter.rootProblem(support.appending(path: "engine"), otherRoots: [], appFolders: apps) != nil)
+        #expect(SyncCenter.rootProblem(base, otherRoots: [], appFolders: apps) != nil)
+        #expect(SyncCenter.rootProblem(base.appending(path: "support-old"), otherRoots: [], appFolders: apps) == nil)
+    }
+
+    @Test func overlappingSyncRootsAreRefused() {
+        let base = base
+        let work = base.appending(path: "Documents/Work")
+        let others = [work.path(percentEncoded: false)]
+        #expect(SyncCenter.rootProblem(work, otherRoots: others, appFolders: []) != nil)
+        #expect(SyncCenter.rootProblem(work.appending(path: "Sub"), otherRoots: others, appFolders: []) != nil)
+        #expect(SyncCenter.rootProblem(base.appending(path: "Documents"), otherRoots: others, appFolders: []) != nil)
+        #expect(SyncCenter.rootProblem(base.appending(path: "Documents/Work 2"), otherRoots: others, appFolders: []) == nil)
+    }
+
+    @Test func stallTextIsForPeople() {
+        // FileIssue with FilesystemErrorListingFolder: a scan-blocked folder.
+        #expect(SyncCenter.describeStall(reason: 1, problems: [18]).contains("System Settings"))
+        // DeletedOrMovedByUser only tells what happened; WaitingForAnotherMoveToComplete is the cause.
+        #expect(SyncCenter.describeStall(reason: 2, problems: [14, 21]) == "Waiting for another move to finish.")
+        #expect(SyncCenter.describeStall(reason: 3, problems: []) == "Waiting for the folder scan to finish.")
+        #expect(SyncCenter.describeStall(reason: 99, problems: [99]) == "This item cannot be synced.")
+    }
+}

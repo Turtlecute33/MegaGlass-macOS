@@ -35,7 +35,7 @@ struct SyncView: View {
                 Section("Issues") {
                     ForEach(Array(center.stalls.enumerated()), id: \.offset) { _, stall in
                         VStack(alignment: .leading, spacing: 4) {
-                            Label(stall.reasonDescription, systemImage: "exclamationmark.triangle.fill")
+                            Label(SyncCenter.describe(stall), systemImage: "exclamationmark.triangle.fill")
                                 .foregroundStyle(.orange)
                             ForEach(Array((stall.localPaths + stall.cloudPaths).enumerated()), id: \.offset) { _, path in
                                 Text(path).font(.caption.monospaced()).foregroundStyle(.secondary).lineLimit(1)
@@ -47,7 +47,7 @@ struct SyncView: View {
         }
         .listStyle(.inset)
         .navigationTitle("Sync & Backup")
-        .navigationSubtitle(center.isStalled ? "Some items need your attention" : center.isSyncing ? "Syncing" : "Up to date")
+        .navigationSubtitle(center.stoppedCount > 0 ? "A sync or backup stopped" : center.isStalled ? "Some items need your attention" : center.isSyncing ? "Syncing" : "Up to date")
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
                 Button { adding = .twoWay } label: { Label("Add Sync", systemImage: "plus") }

@@ -199,18 +199,22 @@ MegaRequestListener *completionListener(MGRequestCompletion completion)
     if ((self = [super init]))
     {
         _reason = stall->reason();
-        _reasonDescription = string(stall->reasonDebugString());
         // path() can be NULL; empty and repeated paths are not listed.
+        // pathProblem() is -1 or NoProblem when the path has no problem.
+        NSMutableArray<NSNumber *> *problems = [NSMutableArray array];
         NSMutableOrderedSet *local = [NSMutableOrderedSet orderedSet];
         for (unsigned i = 0; i < stall->pathCount(false); i++)
         {
             if (const char *path = stall->path(false, (int)i); path && *path) [local addObject:string(path)];
+            if (int problem = stall->pathProblem(false, (int)i); problem > 0) [problems addObject:@(problem)];
         }
         NSMutableOrderedSet *cloud = [NSMutableOrderedSet orderedSet];
         for (unsigned i = 0; i < stall->pathCount(true); i++)
         {
             if (const char *path = stall->path(true, (int)i); path && *path) [cloud addObject:string(path)];
+            if (int problem = stall->pathProblem(true, (int)i); problem > 0) [problems addObject:@(problem)];
         }
+        _pathProblems = [problems copy];
         _localPaths = local.array;
         _cloudPaths = cloud.array;
         _detectedCloudSide = stall->detectedCloudSide();

@@ -142,7 +142,7 @@ screenshot driver are separate tools; the screenshot driver uses a saved account
 | `Sources/MEGABridge` | Objective-C++: sync and backup API, thumbnail processor, engine tuning |
 | `Sources/MegaGlass/Engine` | SDK wrapper, async requests, node snapshots, thumbnails |
 | `Sources/MegaGlass/Features` | Browser, transfers, sync, links, contacts, account, settings, preview |
-| `patches/` | Patch for the SDK bindings (logout signature with sync on) |
+| `patches/` | SDK patches: logout signature with sync on; sync safety (failed folder listings, changed volumes) |
 | `scripts/` | Bootstrap, dependency build, app build, icon, signing identity, release, tap |
 
 Built on the MEGA SDK (BSD 2-Clause).

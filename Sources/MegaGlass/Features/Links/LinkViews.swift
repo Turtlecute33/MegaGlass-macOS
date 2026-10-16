@@ -25,11 +25,7 @@ struct OpenLinksSheet: View {
                 .frame(width: 520, height: 160)
                 .background(.background.secondary, in: .rect(cornerRadius: 10))
             HStack {
-                Button("Paste") {
-                    if let value = NSPasteboard.general.string(forType: .string) {
-                        text += (text.isEmpty ? "" : "\n") + value
-                    }
-                }
+                PasteLinesButton(text: $text)
                 Text(found == 1 ? "1 link" : "\(found) links")
                     .foregroundStyle(.secondary)
                     .font(.callout)
@@ -58,12 +54,16 @@ struct LinkDetailView: View {
 
     var body: some View {
         switch session.state {
-        case .opening:
+        case .idle, .opening:
             VStack(spacing: 12) {
                 ProgressView()
                 Text("Decrypting link…").foregroundStyle(.secondary)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .task(id: session.id) {
+                // A folder link starts its engine only when you select it.
+                if session.state == .idle { session.beginOpen(using: app.engine, workerThreads: app.settings.workerThreads) }
+            }
         case .needsPassword:
             LinkPasswordView(session: session)
         case let .failed(message):
@@ -82,8 +82,8 @@ struct LinkDetailView: View {
             if let browser = session.browser {
                 BrowserView(model: browser)
                     .id(session.id)
-            } else if let node = session.fileNode, let item = session.fileItem {
-                FileLinkView(session: session, node: node, item: item)
+            } else if let node = session.fileNode, let item = session.fileItem, let store = session.fileThumbnails {
+                FileLinkView(session: session, node: node, item: item, store: store)
             }
         }
     }
@@ -120,6 +120,7 @@ private struct FileLinkView: View {
     let session: LinkSession
     let node: MEGANode
     let item: NodeItem
+    let store: ThumbnailStore
     @Environment(AppModel.self) private var app
     @State private var preview: CGImage?
     @State private var importing = false
@@ -134,7 +135,7 @@ private struct FileLinkView: View {
                         .clipShape(.rect(cornerRadius: 16))
                         .frame(maxWidth: 420, maxHeight: 300)
                 } else {
-                    NodeIcon(item: item, store: app.engine.thumbnails, node: node, size: 128)
+                    NodeIcon(item: item, store: store, node: node, size: 128)
                 }
             }
             VStack(spacing: 4) {
@@ -173,12 +174,27 @@ private struct FileLinkView: View {
         .navigationTitle(item.name)
         .task {
             if item.hasPreview {
-                preview = await app.engine.thumbnails.preview(item.id, node: node)
+                preview = await store.preview(item.id, node: node)
             }
         }
         .sheet(isPresented: $importing) {
             FolderPicker(title: "Import to Cloud Drive", action: "Import", exclude: []) { folder in
                 Task { await app.importPublicNode(node, to: folder) }
+            }
+        }
+    }
+}
+
+/// The system Paste button: macOS lets it read the clipboard with no alert, also when
+/// MegaGlass may not paste from other apps.
+struct PasteLinesButton: View {
+    @Binding var text: String
+
+    var body: some View {
+        PasteButton(payloadType: String.self) { @Sendable [text = $text] values in
+            // The text can arrive off the main thread.
+            Task { @MainActor in
+                text.wrappedValue += (text.wrappedValue.isEmpty ? "" : "\n") + values.joined(separator: "\n")
             }
         }
     }

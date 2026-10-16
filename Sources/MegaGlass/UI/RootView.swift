@@ -37,6 +37,15 @@ struct RootView: View {
         .alert(item: $app.alert) { alert in
             Alert(title: Text(alert.title), message: Text(alert.message))
         }
+        .confirmationDialog("Open \(app.pendingLinks?.sorted.mega.count ?? 0) MEGA links?",
+                            isPresented: Binding(get: { app.pendingLinks != nil }, set: { if !$0 { app.pendingLinks = nil } }),
+                            presenting: app.pendingLinks) { pending in
+            Button("Open Links") { app.handleIncoming(pending.sorted, source: pending.source, confirmed: true) }
+        } message: { pending in
+            let count = pending.sorted.mega.count
+            Text((pending.source == .clipboard ? "You copied \(count) MEGA links." : "Another app sent \(count) MEGA links.")
+                 + (count > LinkCenter.openLimit ? " Only the first \(LinkCenter.openLimit) open." : ""))
+        }
         .sheet(isPresented: $app.showOpenLinks) {
             OpenLinksSheet()
         }

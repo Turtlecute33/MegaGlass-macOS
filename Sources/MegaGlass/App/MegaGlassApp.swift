@@ -58,22 +58,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     ///   stay here, every other link goes on to the real browser.
     func application(_ application: NSApplication, open urls: [URL]) {
         var forward: [URL] = []
+        // All the links of one event together: many links ask first.
+        var incoming = LinkSorter.Result()
+        var empty = false
         for url in urls {
             let sorted = LinkSorter.incoming(url, protectorHosts: Set(app.settings.protectorHosts))
             switch url.scheme?.lowercased() {
             case "mega":
-                app.handleIncoming(sorted, source: .scheme)
+                if sorted.isEmpty { empty = true }
+                incoming.add(sorted)
             case "http", "https":
                 if sorted.isEmpty {
                     forward.append(url)
                 } else {
-                    app.handleIncoming(sorted, source: .scheme)
+                    incoming.add(sorted)
                 }
             default:
                 // Web pages and files: the real browser opens them.
                 forward.append(url)
             }
         }
+        if !incoming.isEmpty || empty { app.handleIncoming(incoming, source: .scheme) }
         BrowserRouter.forward(forward, settings: app.settings)
     }
 
@@ -159,9 +164,7 @@ struct AppCommands: Commands {
             Divider()
             Button("Open Links…") { app.showOpenLinks = true }
                 .keyboardShortcut("l")
-            Button("Open Links from Clipboard") {
-                if let text = NSPasteboard.general.string(forType: .string) { app.handleIncoming(text, source: .paste) }
-            }
+            Button("Open Links from Clipboard") { app.openLinksFromClipboard() }
             .keyboardShortcut("v", modifiers: [.command, .shift])
         }
 

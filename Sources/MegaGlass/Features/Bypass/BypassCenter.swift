@@ -1110,7 +1110,11 @@ nonisolated enum MegaLinkFinder {
 
     static func links(in text: String) -> [String] {
         var found = LinkParser.links(in: text).map(\.0)
-        func add(_ more: [String]) { for link in more where !found.contains(link) { found.append(link) } }
+        func add(_ more: [String]) {
+            for link in more where !found.contains(where: { LinkParser.identity(of: $0) == LinkParser.identity(of: link) }) {
+                found.append(link)
+            }
+        }
         if text.contains("%"), let decoded = text.removingPercentEncoding, decoded != text {
             add(LinkParser.links(in: decoded).map(\.0))
         }

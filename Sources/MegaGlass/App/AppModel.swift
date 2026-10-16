@@ -58,6 +58,8 @@ final class AppModel {
     var bypassRequested = false
     /// A link session that the main window must select after it opens.
     var linkToShow: UUID?
+    /// Many links from a copy or from another app: they open after you say yes.
+    var pendingLinks: PendingLinks?
     /// Preview windows that stream from the local HTTP server.
     var streamingClients = 0
     /// Opens the main window, or brings it to the front (set by the app menus).
@@ -88,11 +90,14 @@ final class AppModel {
         bypass.onLinks = { [weak self] links, all in
             Task { [weak self] in
                 guard let self else { return }
-                let chosen = await LinkCenter.largest(links, count: all ? 0 : settings.bypassKeepLargest, sdk: engine.sdk)
+                let keep = all || settings.bypassKeepLargest == 0 ? LinkCenter.openLimit : settings.bypassKeepLargest
+                let chosen = await LinkCenter.largest(links, count: keep, sdk: engine.sdk)
+                let shown = chosen.links.prefix(LinkCenter.openLimit)
                 // In the background: the window stays on Bypass while the links open.
-                let opened = self.links.open(text: chosen.joined(separator: "\n"), account: engine, workerThreads: settings.workerThreads)
-                let text = chosen.count < links.count
-                    ? "The \(opened.count) largest of \(links.count) MEGA links open in Open Links"
+                let opened = self.links.open(text: shown.joined(separator: "\n"), account: engine, workerThreads: settings.workerThreads)
+                let text = shown.count < links.count
+                    ? (chosen.bySize ? "The \(opened.count) largest of \(links.count) MEGA links open in Open Links"
+                        : "\(opened.count) of \(links.count) MEGA links open in Open Links")
                     : opened.count == 1 ? "1 MEGA link opens in Open Links" : "\(opened.count) MEGA links open in Open Links"
                 notify(text, symbol: "link")
             }
@@ -105,6 +110,10 @@ final class AppModel {
         }
         clipboard.onText = { [weak self] text in
             self?.handleIncoming(text, source: .clipboard)
+        }
+        clipboard.onDenied = { [weak self] in
+            self?.alert = AlertItem(title: "MegaGlass cannot read copied links",
+                                    message: "macOS denies MegaGlass access to the clipboard. Allow it in System Settings > Privacy & Security > Paste from Other Apps, or turn off “Open copied MEGA and protector links” in Settings > Links.")
         }
         clipboard.setEnabled(settings.clipboardWatch)
         BrowserRouter.rememberDefault(in: settings)
@@ -256,6 +265,11 @@ final class AppModel {
 
     enum LinkSource { case clipboard, scheme, drop, paste }
 
+    struct PendingLinks {
+        let sorted: LinkSorter.Result
+        let source: LinkSource
+    }
+
     /// Entry point for links from outside: MEGA links open, protector links go to Bypass.
     /// `forceBypass` sends every non-MEGA web link to Bypass (explicit requests).
     func handleIncoming(_ text: String, source: LinkSource, forceBypass: Bool = false) {
@@ -263,7 +277,8 @@ final class AppModel {
                        source: source)
     }
 
-    func handleIncoming(_ sorted: LinkSorter.Result, source: LinkSource) {
+    /// `confirmed`: you said yes to many links from a copy or from another app.
+    func handleIncoming(_ sorted: LinkSorter.Result, source: LinkSource, confirmed: Bool = false) {
         guard !sorted.isEmpty else {
             if source != .clipboard {
                 alert = AlertItem(title: "No MEGA link found",
@@ -272,19 +287,41 @@ final class AppModel {
             }
             return
         }
-        if !sorted.mega.isEmpty {
-            let opened = links.open(text: sorted.mega.joined(separator: "\n"), account: engine, workerThreads: settings.workerThreads)
+        if !confirmed, source == .clipboard || source == .scheme, sorted.mega.count > LinkCenter.askAbove {
+            pendingLinks = PendingLinks(sorted: sorted, source: source)
+            showMainWindow()
+            return
+        }
+        let mega = Array(sorted.mega.prefix(LinkCenter.openLimit))
+        if !mega.isEmpty {
+            let opened = links.open(text: mega.joined(separator: "\n"), account: engine, workerThreads: settings.workerThreads)
             linkToShow = opened.first?.id
+        }
+        if mega.count < sorted.mega.count, !confirmed {
+            alert = AlertItem(title: "\(mega.count) of \(sorted.mega.count) MEGA links open",
+                              message: "One action opens up to \(LinkCenter.openLimit) links. To open the others, paste them in Open Links.")
         }
         if !sorted.protected.isEmpty {
             bypass.enqueue(sorted.protected)
             if sorted.mega.isEmpty { bypassRequested = true }
         }
         var parts: [String] = []
-        if !sorted.mega.isEmpty { parts.append(sorted.mega.count == 1 ? "1 MEGA link" : "\(sorted.mega.count) MEGA links") }
+        if !mega.isEmpty { parts.append(mega.count == 1 ? "1 MEGA link" : "\(mega.count) MEGA links") }
         if !sorted.protected.isEmpty { parts.append(sorted.protected.count == 1 ? "1 link to bypass" : "\(sorted.protected.count) links to bypass") }
         notify(parts.joined(separator: ", "), symbol: source == .clipboard ? "doc.on.clipboard" : "link")
         if source != .paste { showMainWindow() }
+    }
+
+    /// The menu command reads the clipboard itself: macOS can ask first, or deny it.
+    func openLinksFromClipboard() {
+        if let text = NSPasteboard.general.string(forType: .string) {
+            handleIncoming(text, source: .paste)
+        } else {
+            alert = AlertItem(title: "No text from the clipboard",
+                              message: NSPasteboard.general.accessBehavior == .alwaysDeny
+                                  ? "macOS denies MegaGlass access to the clipboard. Paste the links in Open Links, or allow MegaGlass in System Settings > Privacy & Security > Paste from Other Apps."
+                                  : "The clipboard has no text, or macOS did not allow MegaGlass to read it. You can paste the links in Open Links.")
+        }
     }
 
     // MARK: Transfers

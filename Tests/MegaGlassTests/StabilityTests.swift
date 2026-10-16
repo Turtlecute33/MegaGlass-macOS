@@ -730,6 +730,33 @@ struct PlatformTests {
         // Same size: the first link wins. No size (d): last.
         #expect(LinkCenter.pick(links, sizes: sizes, count: 4) == ["b", "e", "a", "c"])
         #expect(LinkCenter.pick(links, sizes: [:], count: 2) == ["a", "b"])
+        // A password-protected link has no size before the password: it is always kept.
+        let locked = "https://mega.nz/#P!fixture"
+        #expect(LinkCenter.pick(["a", locked, "b", "c"], sizes: ["a": 1, "b": 3, "c": 2], count: 2) == ["b", "c", locked])
+    }
+
+    @Test func queryBeforeTheKeyKeepsTheKey() {
+        #expect(LinkParser.links(in: "https://mega.nz/file/AbCdEfGh?fbclid=IwAR0_x-Y#key123").map(\.0) == ["https://mega.nz/file/AbCdEfGh#key123"])
+        #expect(LinkParser.links(in: "mega.nz/folder/AbCd?utm_source=x&utm_medium=y#Key/file/Sub").map(\.0) == ["https://mega.nz/folder/AbCd#Key/file/Sub"])
+        #expect(LinkParser.links(in: "mega://file/AbCd?x=1#Key").map(\.0) == ["https://mega.nz/file/AbCd#Key"])
+        #expect(LinkParser.links(in: "Is it https://mega.nz/file/AbCd#Key?").map(\.0) == ["https://mega.nz/file/AbCd#Key"])
+        // A query never takes the key of the next link or of the page.
+        #expect(LinkParser.links(in: "https://mega.nz/file/AAAA?x=1,https://mega.nz/file/BBBB#k2").map(\.0)
+                == ["https://mega.nz/file/AAAA", "https://mega.nz/file/BBBB#k2"])
+        #expect(LinkParser.links(in: ##"<a href="https://mega.nz/file/AAAA?x=1">a</a><a href="#top">"##).map(\.0)
+                == ["https://mega.nz/file/AAAA"])
+    }
+
+    @Test func oneItemInTwoLinkFormsCountsOnce() {
+        #expect(LinkParser.identity(of: "https://mega.nz/#F!AbCd!Key") == LinkParser.identity(of: "https://mega.co.nz/folder/AbCd#Key"))
+        #expect(LinkParser.identity(of: "https://mega.nz/#!AbCd!Key") == LinkParser.identity(of: "https://mega.app/file/AbCd#Key"))
+        #expect(LinkParser.identity(of: "https://mega.nz/file/AbCd#Key") != LinkParser.identity(of: "https://mega.nz/folder/AbCd#Key"))
+        #expect(LinkParser.identity(of: "https://mega.nz/file/AbCd#Key") != LinkParser.identity(of: "https://mega.nz/file/AbCd#Other"))
+        #expect(LinkParser.links(in: "https://mega.nz/#F!AbCd!Key\nhttps://www.mega.nz/folder/AbCd#Key").count == 1)
+        var incoming = LinkSorter.Result(mega: ["https://mega.nz/file/a#k"])
+        incoming.add(LinkSorter.Result(mega: ["https://mega.nz/file/a#k", "https://mega.nz/file/b#k"], protected: ["https://ouo.io/x"]))
+        #expect(incoming.mega == ["https://mega.nz/file/a#k", "https://mega.nz/file/b#k"])
+        #expect(incoming.protected == ["https://ouo.io/x"])
     }
 
     @Test(arguments: [

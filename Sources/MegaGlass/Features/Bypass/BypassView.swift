@@ -52,11 +52,7 @@ struct BypassView: View {
                 .frame(height: 96)
                 .background(.background.secondary, in: .rect(cornerRadius: 10))
             HStack {
-                Button("Paste") {
-                    if let value = NSPasteboard.general.string(forType: .string) {
-                        text += (text.isEmpty ? "" : "\n") + value
-                    }
-                }
+                PasteLinesButton(text: $text)
                 Spacer()
                 Button {
                     app.handleIncoming(text, source: .paste, forceBypass: true)

@@ -5,6 +5,7 @@ struct LinkSettings: View {
     @Environment(AppModel.self) private var app
     @State private var isDefault = BrowserRouter.isDefaultBrowser
     @State private var browsers = BrowserRouter.browsers()
+    @State private var clipboardDenied = NSPasteboard.general.accessBehavior == .alwaysDeny
 
     var body: some View {
         @Bindable var settings = app.settings
@@ -12,9 +13,23 @@ struct LinkSettings: View {
             Section {
                 Toggle("Open copied MEGA and protector links", isOn: $settings.clipboardWatch)
                     .onChange(of: settings.clipboardWatch) { _, enabled in app.clipboard.setEnabled(enabled) }
-                Text("Copy a link in any app (for example right-click > Copy Link in the browser). The check is on this Mac; other text, and items that password managers mark as secret, are ignored. Protector links go to Bypass, which sends them to the enabled services. macOS asks once for permission to paste from other apps.")
+                Text("Copy a link in any app (for example right-click > Copy Link in the browser). MegaGlass reads a copy only when macOS finds a web address in it; other text, and items that password managers mark as secret, are not read. The check is on this Mac. Protector links go to Bypass, which sends them to the enabled services.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                Text("macOS asks each time MegaGlass reads a copied link, unless you set MegaGlass to Allow in Privacy & Security > Paste from Other Apps. With Allow, macOS does not ask, and MegaGlass reads each copy that has a web address.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if clipboardDenied {
+                    Text("macOS denies MegaGlass access to the clipboard (Paste from Other Apps), so copied links do not open.")
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
+                HStack {
+                    Spacer()
+                    Button("Open Privacy & Security Settings") {
+                        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Pasteboard")!)
+                    }
+                }
             } header: {
                 Text("Clipboard")
             }
@@ -45,6 +60,11 @@ struct LinkSettings: View {
             BrowserRouter.rememberDefault(in: app.settings)
             isDefault = BrowserRouter.isDefaultBrowser
             browsers = BrowserRouter.browsers()
+            clipboardDenied = NSPasteboard.general.accessBehavior == .alwaysDeny
+        }
+        // The choice can change in System Settings while this window is open.
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            clipboardDenied = NSPasteboard.general.accessBehavior == .alwaysDeny
         }
     }
 }

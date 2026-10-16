@@ -110,6 +110,8 @@ screenshot driver are separate tools; the screenshot driver uses a saved account
 - The session token and the API keys are in the login Keychain. The password is never
   stored. Copied MEGA links stay on this Mac (no Universal Clipboard, marked as concealed
   for clipboard history apps).
+- The clipboard watch reads a copy only when macOS finds a web address in it; macOS gives
+  that answer without the text. The list of open links (with their keys) is not in backups.
 - A logout with no network logs out on this Mac and deletes the local cache; the session
   stays active on the MEGA server until it expires or you close it in MEGA on the web.
 - Thumbnails and previews use private cache folders. Each preview attempt has its own

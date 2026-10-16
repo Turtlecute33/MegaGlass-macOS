@@ -121,7 +121,10 @@ private struct PrivacySettings: View {
             LabeledContent("Cached thumbnails and previews") {
                 Button("Clear Cache") {
                     app.engine.thumbnails.clear()
-                    for link in app.links.sessions { link.engine?.thumbnails.clear() }
+                    for link in app.links.sessions {
+                        link.engine?.thumbnails.clear()
+                        link.fileThumbnails?.clear()
+                    }
                     app.notify("Cache cleared", symbol: "trash")
                 }
             }

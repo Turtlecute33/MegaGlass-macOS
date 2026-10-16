@@ -172,6 +172,7 @@ struct MainView: View {
 struct Sidebar: View {
     @Environment(AppModel.self) private var app
     @Binding var selection: SidebarItem?
+    @State private var confirmCloseAll = false
 
     var body: some View {
         List(selection: $selection) {
@@ -192,7 +193,7 @@ struct Sidebar: View {
 
             Section {
                 ForEach(app.links.sessions) { session in
-                    LinkSidebarRow(session: session)
+                    LinkSidebarRow(session: session, closeAll: { confirmCloseAll = true })
                         .tag(SidebarItem.openLink(session.id))
                 }
                 Label("Bypass", systemImage: "wand.and.sparkles")
@@ -235,12 +236,18 @@ struct Sidebar: View {
         .safeAreaInset(edge: .bottom) {
             SidebarFooter(selection: $selection)
         }
+        .confirmationDialog("Close all \(app.links.sessions.count) open links?", isPresented: $confirmCloseAll) {
+            Button("Close All Links", role: .destructive) { app.links.closeAll() }
+        } message: {
+            Text("The links, and their cache and thumbnails on this Mac, are removed. Copy the links that you want to keep first.")
+        }
     }
 }
 
 private struct LinkSidebarRow: View {
     @Environment(AppModel.self) private var app
     let session: LinkSession
+    let closeAll: () -> Void
 
     var body: some View {
         Label {
@@ -264,6 +271,7 @@ private struct LinkSidebarRow: View {
                 Pasteboard.copy(session.link)
             }
             Button("Close Link", role: .destructive) { app.links.close(session) }
+            Button("Close All Links…", role: .destructive, action: closeAll)
         }
     }
 }

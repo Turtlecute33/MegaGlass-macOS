@@ -15,6 +15,8 @@ struct MainView: View {
     @State private var selection: SidebarItem? = .cloudDrive
     @State private var browser: BrowserModel?
     @State private var preparingBrowser = false
+    /// A "Show in MEGA" folder that the Cloud Drive opens instead of its root.
+    @State private var pendingReveal: UInt64?
     #if MEGAGLASS_TESTS
     @State private var resolvingTestFolder = false
     #endif
@@ -34,21 +36,27 @@ struct MainView: View {
         .onChange(of: selection) { _, item in route(item) }
         .onChange(of: app.revealRequest) { _, handle in
             guard let handle, let browser else { return }
-            selection = .cloudDrive
-            browser.go(to: .folder(handle))
+            if selection == .cloudDrive {
+                browser.go(to: .folder(handle))
+            } else {
+                pendingReveal = handle
+                selection = .cloudDrive
+            }
             app.revealRequest = nil
         }
-        .onChange(of: app.linkToShow) { _, id in
+        // Requests can come before this window opens (a link from another app while the
+        // window is closed, or while the account loads): they apply when it appears.
+        .onChange(of: app.linkToShow, initial: true) { _, id in
             guard let id else { return }
             selection = .openLink(id)
             app.linkToShow = nil
         }
-        .onChange(of: app.bypassRequested) { _, requested in
+        .onChange(of: app.bypassRequested, initial: true) { _, requested in
             guard requested else { return }
             selection = .bypass
             app.bypassRequested = false
         }
-        .onChange(of: app.transfersRequested) { _, requested in
+        .onChange(of: app.transfersRequested, initial: true) { _, requested in
             guard requested else { return }
             selection = .transfers
             app.transfersRequested = false
@@ -129,6 +137,11 @@ struct MainView: View {
 
     private func route(_ item: SidebarItem?) {
         guard let browser, let item else { return }
+        if item == .cloudDrive, let handle = pendingReveal {
+            pendingReveal = nil
+            browser.reset(to: .folder(handle))
+            return
+        }
         let sdk = app.engine.sdk
         let special: (@Sendable () -> MEGANode?)? = switch item {
         case .cloudDrive: { sdk.rootNode }

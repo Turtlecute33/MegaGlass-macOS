@@ -80,6 +80,8 @@ final class BrowserModel {
     @ObservationIgnored private var searchTask: Task<Void, Never>?
     @ObservationIgnored private var searchToken: MEGACancelToken?
     @ObservationIgnored private var loadSerial = 0
+    /// The last engine change seen: a gap means that changes were merged before this one.
+    @ObservationIgnored private var changeSerial: Int
     @ObservationIgnored private let listingProvider: (@Sendable (Location, SortKey, Bool) async -> Listing)?
     @ObservationIgnored private let searchProvider: (@Sendable (String) async -> [NodeItem])?
 
@@ -94,6 +96,7 @@ final class BrowserModel {
         self.ascending = ascending
         self.listingProvider = listingProvider
         self.searchProvider = searchProvider
+        changeSerial = engine.nodeChange.serial
         load()
     }
 
@@ -109,6 +112,8 @@ final class BrowserModel {
     var canGoForward: Bool { !forward.isEmpty }
     var canGoUp: Bool { crumbs.count > 1 }
     var isFolderLink: Bool { engine.kind == .folderLink }
+    /// Uploads and new folders: a writable account folder, not the Rubbish Bin or search results.
+    var canUpload: Bool { engine.kind == .account && canWrite && !isRubbish && !isSearching }
 
     var title: String {
         if isSearching { return "Search" }
@@ -244,6 +249,10 @@ final class BrowserModel {
 
     /// Reloads only when the change touches what is on screen.
     func handle(_ change: NodeChange) {
+        // The view sees only the last of changes that arrive close together: after a gap,
+        // an earlier change can be for this folder.
+        let missed = change.serial != changeSerial + 1
+        changeSerial = change.serial
         let relevant: Bool
         switch location {
         case let .folder(handle):
@@ -255,7 +264,7 @@ final class BrowserModel {
         default:
             relevant = true
         }
-        guard relevant || isSearching else { return }
+        guard relevant || missed || isSearching else { return }
         reloadTask?.cancel()
         reloadTask = Task {
             try? await Task.sleep(for: .milliseconds(120))

@@ -10,6 +10,7 @@ struct AccountView: View {
     @State private var changingPassword = false
     @State private var confirmLogout = false
     @State private var confirmDeleteVersions = false
+    @State private var confirmEmptyRubbish = false
 
     private var session: Session { app.session }
 
@@ -31,6 +32,8 @@ struct AccountView: View {
         .task {
             await session.refreshAccount()
             await loadVersionsOption()
+            // The check after login can fail (no network): try again here.
+            if session.twoFactorEnabled == nil { await session.refreshTwoFactor() }
         }
         .sheet(isPresented: $twoFactorSetup) { TwoFactorSetupSheet() }
         .sheet(isPresented: $twoFactorDisable) {
@@ -42,7 +45,7 @@ struct AccountView: View {
         .confirmationDialog("Log out of MEGA?", isPresented: $confirmLogout) {
             Button("Log Out", role: .destructive) { Task { await session.signOut() } }
         } message: {
-            Text("Syncs stop, and the local cache and thumbnails on this Mac are deleted.")
+            Text("Syncs stop, and the account cache and thumbnails on this Mac are deleted. Open links stay until you close them.")
         }
         .confirmationDialog("Delete all previous versions?", isPresented: $confirmDeleteVersions) {
             Button("Delete Versions", role: .destructive) {
@@ -59,6 +62,11 @@ struct AccountView: View {
             }
         } message: {
             Text("Current files stay. Only their older versions are deleted.")
+        }
+        .confirmationDialog("Empty the Rubbish Bin?", isPresented: $confirmEmptyRubbish) {
+            Button("Empty Rubbish Bin", role: .destructive) { Task { await app.emptyRubbishBin() } }
+        } message: {
+            Text("All items in the Rubbish Bin will be deleted permanently.")
         }
     }
 
@@ -170,7 +178,8 @@ struct AccountView: View {
             HStack {
                 Text("The Rubbish Bin uses \(Format.bytes(session.account?.rubbishUsed ?? 0)).")
                 Spacer()
-                Button("Empty Rubbish Bin") { Task { await app.emptyRubbishBin() } }
+                Button("Empty Rubbish Bin…") { confirmEmptyRubbish = true }
+                    .disabled(session.account?.rubbishUsed == 0)
             }
         }
         .padding(20)
@@ -323,7 +332,9 @@ private struct PasswordSheet: View {
     @State private var code = ""
     @State private var error: String?
 
-    private var twoFactor: Bool { app.session.twoFactorEnabled == true }
+    /// The code field shows also when the two-factor state is unknown (its check failed).
+    private var twoFactor: Bool { app.session.twoFactorEnabled != false }
+    private var needsCode: Bool { app.session.twoFactorEnabled == true }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -332,7 +343,7 @@ private struct PasswordSheet: View {
             SecureField("New password", text: $new)
             SecureField("Repeat new password", text: $repeated)
             if twoFactor {
-                TextField("Two-factor code", text: $code)
+                TextField(needsCode ? "Two-factor code" : "Two-factor code (if it is on)", text: $code)
             }
             if !new.isEmpty, new.count < 8 {
                 Text("Use 8 or more characters.").font(.caption).foregroundStyle(.orange)
@@ -355,7 +366,8 @@ private struct PasswordSheet: View {
                     }
                 }
                 .buttonStyle(.glassProminent)
-                .disabled(new.count < 8 || new != repeated || current.isEmpty || (twoFactor && code.count != 6))
+                .disabled(new.count < 8 || new != repeated || current.isEmpty
+                          || ((needsCode || !code.isEmpty) && code.count != 6))
                 .keyboardShortcut(.defaultAction)
             }
         }

@@ -23,14 +23,48 @@ nonisolated enum LinkSorter {
         for match in urlPattern.matches(in: text, range: range) {
             guard let range = Range(match.range, in: text) else { continue }
             let link = String(text[range]).trimmingCharacters(in: CharacterSet(charactersIn: ".,;)]}>"))
-            guard let host = URL(string: link)?.host()?.lowercased(), !isMega(host),
+            guard let url = URL(string: link), let host = url.host()?.lowercased(), !isMega(host),
                   seen.insert(link).inserted else { continue }
-            if allWebLinks || matches(host, protectorHosts) {
+            if allWebLinks || (matches(host, protectorHosts) && isLocker(url)) {
                 result.protected.append(link)
             }
         }
         return result
     }
+
+    /// One address from another app: a mega:// link, or a web link when MegaGlass is the
+    /// default browser. Only the address itself counts, not links in its query, and a
+    /// mega:// address never goes to Bypass.
+    static func incoming(_ url: URL, protectorHosts: Set<String>) -> Result {
+        var result = Result()
+        switch url.scheme?.lowercased() {
+        case "mega":
+            result.mega = LinkParser.links(in: url.absoluteString).prefix(1).map(\.0)
+        case "http", "https":
+            guard let host = url.host()?.lowercased() else { break }
+            if isMega(host) {
+                result.mega = LinkParser.links(in: url.absoluteString).prefix(1).map(\.0)
+            } else if matches(host, protectorHosts), isLocker(url) {
+                result.protected = [url.absoluteString]
+            }
+        default:
+            break
+        }
+        return result
+    }
+
+    /// The home page and the account, login and password pages of a protector site are
+    /// not links to bypass: their addresses can hold tokens.
+    static func isLocker(_ url: URL) -> Bool {
+        let parts = url.pathComponents.filter { $0 != "/" }.map { $0.lowercased() }
+        return !parts.isEmpty && !parts.contains(where: accountPages.contains)
+    }
+
+    private static let accountPages: Set<String> = [
+        "login", "logout", "signin", "sign-in", "signup", "sign-up", "register", "auth", "oauth",
+        "account", "accounts", "dashboard", "settings", "profile", "password", "reset-password",
+        "forgot-password", "verify", "admin", "api",
+    ]
 
     static func isMega(_ host: String) -> Bool {
         ["mega.nz", "mega.co.nz", "mega.app", "mega.io"].contains { host == $0 || host.hasSuffix("." + $0) }

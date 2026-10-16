@@ -309,10 +309,30 @@ struct AuthenticationTests {
         let session = Session(engine: engine, authentication: auth, credentials: credentials)
         await session.start()
         try await session.signIn(email: "tester@example.invalid", password: "fixture", code: nil)
-        engine.onSessionExpired?()
+        engine.onSessionExpired?(nil)
         #expect(await eventually { session.phase == .signedOut })
         #expect(credentials.token == nil)
-        #expect(session.startupMessage != nil)
+        #expect(session.startupMessage == "Your session has expired. Log in again.")
+        // MEGA already ended the session: the logout happens on this Mac only.
+        #expect(auth.logoutCount == 0)
+        #expect(auth.localLogoutCount == 1)
+    }
+
+    @Test func blockedAccountShowsTheReasonAndDeletesLocalCache() async throws {
+        let (engine, root) = try makeEngine()
+        defer { engine.shutdown(); try? FileManager.default.removeItem(at: root) }
+        let cache = root.appending(path: "account-cache", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
+        try Data("fixture".utf8).write(to: cache.appending(path: "statecache.db"))
+        let auth = MockAuthentication(), credentials = MemoryCredentials()
+        let session = Session(engine: engine, authentication: auth, credentials: credentials, localCache: cache)
+        await session.start()
+        try await session.signIn(email: "tester@example.invalid", password: "fixture", code: nil)
+        engine.onSessionExpired?("Fixture block reason")
+        #expect(await eventually { session.phase == .signedOut })
+        #expect(session.startupMessage == "Fixture block reason")
+        #expect(credentials.token == nil)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: cache.path).isEmpty)
     }
 
     @Test func failedAccountLoadIsShownAndNotRemembered() async throws {
@@ -425,6 +445,14 @@ private actor ControlledListings {
     func hasCalled(_ location: Location) -> Bool { calls.contains(location) }
 }
 
+private actor ListingCounter {
+    var count = 0
+    func next() -> Listing {
+        count += 1
+        return Listing(items: [NodeItem(id: 1, name: "Fixture")])
+    }
+}
+
 @MainActor
 struct BrowserTests {
     @Test func rapidNavigationRejectsLateListing() async throws {
@@ -479,6 +507,41 @@ struct BrowserTests {
         #expect(await eventually { !empty.isLoading })
         #expect(empty.selection.isEmpty)
         empty.stop()
+    }
+
+    @Test func mergedEngineChangesReloadTheVisibleFolder() async throws {
+        let (engine, root) = try makeEngine()
+        defer { engine.shutdown(); try? FileManager.default.removeItem(at: root) }
+        let counter = ListingCounter()
+        let model = BrowserModel(engine: engine, start: .folder(1), listingProvider: { _, _, _ in
+            await counter.next()
+        })
+        #expect(await eventually { await counter.count == 1 && !model.isLoading })
+        // The next change, for another folder: nothing to reload.
+        model.handle(NodeChange(serial: 1, parents: [99], handles: [100]))
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(await counter.count == 1)
+        // A gap: the change for this folder (serial 2) was merged into serial 3.
+        model.handle(NodeChange(serial: 3, parents: [99], handles: [101]))
+        #expect(await eventually { await counter.count == 2 })
+        model.stop()
+    }
+
+    @Test func rubbishBinIsNotAnUploadTarget() async throws {
+        let (engine, root) = try makeEngine(kind: .account)
+        defer { engine.shutdown(); try? FileManager.default.removeItem(at: root) }
+        let rubbish = BrowserModel(engine: engine, start: .folder(1), listingProvider: { _, _, _ in
+            Listing(canWrite: true, isRubbish: true)
+        })
+        #expect(await eventually { !rubbish.isLoading && rubbish.canWrite })
+        #expect(!rubbish.canUpload)
+        rubbish.stop()
+        let folder = BrowserModel(engine: engine, start: .folder(2), listingProvider: { _, _, _ in
+            Listing(canWrite: true)
+        })
+        #expect(await eventually { !folder.isLoading && folder.canWrite })
+        #expect(folder.canUpload)
+        folder.stop()
     }
 
     @Test func largeFolderSortIsStrictAndDeterministic() {
@@ -780,6 +843,37 @@ struct PlatformTests {
         #expect(PreviewView.noAutomaticPreview(NodeItem(id: 5, name: "config.toml"), allowLarge: false) == nil)
         #expect(PreviewView.noAutomaticPreview(NodeItem(id: 6, name: "report.pdf"), allowLarge: false) == nil)
         #expect(PreviewView.noAutomaticPreview(NodeItem(id: 7, name: "big.pdf", size: 300_000_000), allowLarge: false)?.canForce == true)
+    }
+
+    @Test func incomingAddressesCountOnlyThemselves() throws {
+        let hosts = Set(LinkSorter.defaultProtectorHosts)
+        func incoming(_ address: String) throws -> LinkSorter.Result {
+            LinkSorter.incoming(try #require(URL(string: address)), protectorHosts: hosts)
+        }
+        #expect(try incoming("mega://folder/abc#key").mega == ["https://mega.nz/folder/abc#key"])
+        #expect(try incoming("https://mega.nz/file/abc#key").mega == ["https://mega.nz/file/abc#key"])
+        // A mega:// address never goes to Bypass.
+        #expect(try incoming("mega://x?u=https://ouo.io/AbCdE").isEmpty)
+        // Links in the query of another site do not count: the browser opens the page.
+        #expect(try incoming("https://duckduckgo.com/?q=https://mega.nz/file/abc#key").isEmpty)
+        #expect(try incoming("https://example.com/?r=https://ouo.io/AbCdE").isEmpty)
+        // Home, account and password pages of a protector site go to the browser.
+        #expect(try incoming("https://linkvertise.com/").isEmpty)
+        #expect(try incoming("https://linkvertise.com/reset-password?token=fixture").isEmpty)
+        #expect(try incoming("https://publisher.linkvertise.com/dashboard").isEmpty)
+        #expect(try incoming("https://linkvertise.com/123/abc").protected == ["https://linkvertise.com/123/abc"])
+        #expect(try incoming("https://lootdest.org/s?abc").protected == ["https://lootdest.org/s?abc"])
+        let copied = LinkSorter.sort("https://work.ink/login https://ouo.io/AbCdE", protectorHosts: hosts)
+        #expect(copied.protected == ["https://ouo.io/AbCdE"])
+    }
+
+    @Test func fatalEngineErrorsExplainTheRestart() {
+        #expect(MegaFailure.fatalErrorMessage(reason: 3)?.contains("disk is full") == true)
+        #expect(MegaFailure.fatalErrorMessage(reason: 2) != nil)
+        #expect(MegaFailure.fatalErrorMessage(reason: -1) != nil)
+        // Sync settings problems stop no sync.
+        #expect(MegaFailure.fatalErrorMessage(reason: 5) == nil)
+        #expect(MegaFailure.fatalErrorMessage(reason: 6) == nil)
     }
 
     @Test func megaSchemeLinksNeedABoundary() {

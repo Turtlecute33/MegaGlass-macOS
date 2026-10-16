@@ -99,7 +99,7 @@ struct BrowserView: View {
             }
     }
 
-    private var canUpload: Bool { isAccount && model.canWrite && !model.isRubbish && !model.isSearching }
+    private var canUpload: Bool { model.canUpload }
 
     private var subtitle: String {
         let count = model.items.count

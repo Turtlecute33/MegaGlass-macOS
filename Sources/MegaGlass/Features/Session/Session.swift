@@ -167,12 +167,11 @@ final class Session {
         self.authentication = authentication ?? SDKSessionAuthentication(sdk: engine.sdk)
         self.credentials = credentials ?? KeychainSessionCredentials()
         self.localCache = localCache
-        engine.onSessionExpired = { [weak self] in
+        engine.onSessionExpired = { [weak self] reason in
             Task {
                 guard let self, !self.isSigningOut, !self.authenticating,
                       self.phase != .signedOut, self.phase != .starting else { return }
-                self.startupMessage = "Your session has expired. Log in again."
-                await self.signOut()
+                await self.signOutTransaction(endedBy: reason ?? "Your session has expired. Log in again.")
             }
         }
         engine.onReloadNeeded = { [weak self] in
@@ -289,27 +288,29 @@ final class Session {
         await Task { await signOutTransaction() }.value
     }
 
-    private func signOutTransaction() async {
+    /// `endedBy`: MEGA already ended the session (the message says why), so the logout
+    /// happens on this Mac only.
+    private func signOutTransaction(endedBy message: String? = nil) async {
         guard phase != .signedOut, phase != .starting, !isSigningOut, !authenticating else { return }
         isSigningOut = true
         generation = UUID() // Invalidate profile, quota and progress callbacks immediately.
         defer { isSigningOut = false }
-        var offline = false
-        do {
-            try await authentication.logout()
-        } catch {
+        var local = message != nil
+        if !local {
+            do { try await authentication.logout() } catch { local = true }
+        }
+        if local {
             // A local logout clears cached credentials even when the network is unavailable.
             do { try await authentication.localLogout() } catch {
                 onError?(error)
                 return
             }
-            offline = true
         }
         do { try credentials.delete() } catch { onError?(error) }
-        if offline {
+        if local {
             // The engine keeps its node cache after a local logout; remove it here.
             if let localCache { await EngineQueue.run { AppPaths.removeContents(of: localCache) } }
-            startupMessage = "MEGA could not be reached. You are logged out on this Mac, but the session stays active on the server until it expires. To end it now, close it in MEGA on the web (Settings > Security > Session history)."
+            startupMessage = message ?? "MEGA could not be reached. You are logged out on this Mac, but the session stays active on the server until it expires. To end it now, close it in MEGA on the web (Settings > Security > Session history)."
         }
         leaveAccount()
     }

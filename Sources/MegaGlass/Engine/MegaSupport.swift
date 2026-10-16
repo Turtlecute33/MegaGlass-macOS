@@ -57,6 +57,16 @@ nonisolated struct MegaFailure: LocalizedError, Sendable, Equatable {
         default: fallback.isEmpty ? "Error \(code)" : fallback
         }
     }
+
+    /// The engine could not use its local database and stopped the syncs until the next
+    /// start. Nil: a sync settings problem that stops no sync.
+    static func fatalErrorMessage(reason: Int) -> String? {
+        switch ReasonError(rawValue: reason) {
+        case .noJSCD, .generateJSCD: nil
+        case .dbFull: "The disk is full. Free some disk space, then quit MegaGlass and open it again."
+        default: "MegaGlass could not read or write its local data. Quit MegaGlass and open it again."
+        }
+    }
 }
 
 /// Bridges one SDK request to async/await.

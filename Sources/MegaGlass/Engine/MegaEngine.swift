@@ -21,7 +21,10 @@ nonisolated enum EngineEvent: Sendable {
     case contactRequests
     case account
     case reloadNeeded
-    case sessionExpired
+    /// MEGA ended the session (with the reason to show, when there is one).
+    case sessionExpired(String?)
+    /// The engine could not use its local database and stopped the syncs (an SDK reason code).
+    case fatalError(Int)
 }
 
 /// One MEGA engine instance: the account, or one open folder link.
@@ -40,8 +43,9 @@ final class MegaEngine {
     private(set) var nodeChange = NodeChange()
     private(set) var contactsRevision = 0
     private(set) var accountRevision = 0
-    @ObservationIgnored var onSessionExpired: (() -> Void)?
+    @ObservationIgnored var onSessionExpired: ((String?) -> Void)?
     @ObservationIgnored var onReloadNeeded: (() -> Void)?
+    @ObservationIgnored var onFatalError: ((Int) -> Void)?
 
     init(kind: Kind, id: String, basePath: URL, workerThreads: Int, thumbnailDirectory: URL? = nil) {
         self.id = id
@@ -86,6 +90,7 @@ final class MegaEngine {
         sdk.remove(events as any MEGARequestDelegate)
         onReloadNeeded = nil
         onSessionExpired = nil
+        onFatalError = nil
     }
 
     private func apply(_ event: EngineEvent, generation: UUID) {
@@ -99,8 +104,10 @@ final class MegaEngine {
             accountRevision += 1
         case .reloadNeeded:
             onReloadNeeded?()
-        case .sessionExpired:
-            onSessionExpired?()
+        case let .sessionExpired(reason):
+            onSessionExpired?(reason)
+        case let .fatalError(reason):
+            onFatalError?(reason)
         }
     }
 
@@ -120,7 +127,22 @@ nonisolated private final class EngineEvents: NSObject, MEGAGlobalDelegate, MEGA
     var deliver: (@Sendable (EngineEvent) -> Void)?
 
     func onRequestFinish(_ api: MEGASdk, request: MEGARequest, error: MEGAError) {
-        if error.type == .apiESid { deliver?(.sessionExpired) }
+        // When MEGA ends the session (closed on the web, or the account is blocked) with no
+        // request waiting, the engine logs out by itself: that logout finishes with no error.
+        let loggedOutByEngine = request.type == .MEGARequestTypeLogout
+            && [MEGAErrorType.apiESid.rawValue, MEGAErrorType.apiEBlocked.rawValue].contains(request.paramType)
+        if error.type == .apiESid || loggedOutByEngine { deliver?(.sessionExpired(nil)) }
+    }
+
+    func onEvent(_ api: MEGASdk, event: MEGAEvent) {
+        switch event.type {
+        case .accountBlocked:
+            deliver?(.sessionExpired(event.text))
+        case .fatalError:
+            deliver?(.fatalError(event.number))
+        default:
+            break
+        }
     }
 
     func onNodesUpdate(_ api: MEGASdk, nodeList: MEGANodeList?) {

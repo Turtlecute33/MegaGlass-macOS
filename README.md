@@ -97,7 +97,11 @@ screenshot driver are separate tools; the screenshot driver uses a saved account
 
 ## Privacy and security
 
-- No telemetry. Cloud storage uses the official MEGA SDK and its pinned API connection.
+- No telemetry or analytics in the app. Cloud storage uses the official MEGA SDK and its
+  pinned API connection. The SDK itself sends MEGA short diagnostic reports: load times and
+  item counts each time the account or a folder link loads, and error events (for example
+  a file that cannot be decrypted, or a sync or database problem). It has no option to turn
+  them off.
 - Bypass opens each protector link and its result pages from your internet address, sends
   the link to the enabled third-party services and loads their pages; those services have
   their own privacy policies. Clipboard-watch and browser-router links go to Bypass with no

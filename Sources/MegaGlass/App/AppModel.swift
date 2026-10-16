@@ -60,9 +60,12 @@ final class AppModel {
     var linkToShow: UUID?
     /// Preview windows that stream from the local HTTP server.
     var streamingClients = 0
+    /// Opens the main window, or brings it to the front (set by the app menus).
+    @ObservationIgnored var openMainWindow: (() -> Void)?
 
     @ObservationIgnored private var toastTask: Task<Void, Never>?
     @ObservationIgnored private var started = false
+    @ObservationIgnored private var activity: (any NSObjectProtocol)?
 
     init() {
         // The files and folders inside a folder download get clean names, as single downloads do.
@@ -119,6 +122,29 @@ final class AppModel {
                 self?.notify("\(item.name): \(message)", symbol: "exclamationmark.triangle")
             }
         }
+        engine.onFatalError = { [weak self] reason in
+            guard let self, let message = MegaFailure.fatalErrorMessage(reason: reason) else { return }
+            alert = AlertItem(title: "Syncs stopped", message: message)
+            showMainWindow()
+        }
+        trackActivity()
+    }
+
+    /// Transfers and syncs go on when the app has no window: App Nap must not slow them.
+    /// The Mac can still go to sleep.
+    private func trackActivity() {
+        let busy = withObservationTracking {
+            transfers.hasActivity || syncs.isSyncing
+        } onChange: { [weak self] in
+            Task { @MainActor in self?.trackActivity() }
+        }
+        if busy, activity == nil {
+            activity = ProcessInfo.processInfo.beginActivity(options: .userInitiatedAllowingIdleSystemSleep,
+                                                             reason: "MEGA transfers and syncs")
+        } else if !busy, let activity {
+            ProcessInfo.processInfo.endActivity(activity)
+            self.activity = nil
+        }
     }
 
     func startOnce() async {
@@ -154,6 +180,12 @@ final class AppModel {
 
     func show(_ error: any Error, title: String = "The action failed") {
         alert = AlertItem(title: title, message: error.localizedDescription)
+    }
+
+    /// Requests, toasts and alerts show in the main window: it opens when it is closed.
+    func showMainWindow() {
+        openMainWindow?()
+        NSApp.activate()
     }
 
     @discardableResult
@@ -227,11 +259,16 @@ final class AppModel {
     /// Entry point for links from outside: MEGA links open, protector links go to Bypass.
     /// `forceBypass` sends every non-MEGA web link to Bypass (explicit requests).
     func handleIncoming(_ text: String, source: LinkSource, forceBypass: Bool = false) {
-        let sorted = LinkSorter.sort(text, protectorHosts: Set(settings.protectorHosts), allWebLinks: forceBypass)
+        handleIncoming(LinkSorter.sort(text, protectorHosts: Set(settings.protectorHosts), allWebLinks: forceBypass),
+                       source: source)
+    }
+
+    func handleIncoming(_ sorted: LinkSorter.Result, source: LinkSource) {
         guard !sorted.isEmpty else {
             if source != .clipboard {
                 alert = AlertItem(title: "No MEGA link found",
                                   message: "There are no MEGA links or link-protector links in the text.")
+                if source == .scheme { showMainWindow() }
             }
             return
         }
@@ -247,7 +284,7 @@ final class AppModel {
         if !sorted.mega.isEmpty { parts.append(sorted.mega.count == 1 ? "1 MEGA link" : "\(sorted.mega.count) MEGA links") }
         if !sorted.protected.isEmpty { parts.append(sorted.protected.count == 1 ? "1 link to bypass" : "\(sorted.protected.count) links to bypass") }
         notify(parts.joined(separator: ", "), symbol: source == .clipboard ? "doc.on.clipboard" : "link")
-        if source != .paste { NSApp.activate() }
+        if source != .paste { showMainWindow() }
     }
 
     // MARK: Transfers
@@ -317,14 +354,19 @@ final class AppModel {
             return
         }
         let sdk = engine.sdk
+        let paths = urls.map(\.path)
         Task {
             guard let parent = await sdk.loadNode(folder) else {
                 show(MegaFailure(code: -9, message: "The folder is no longer available. Refresh and try again."),
                      title: "The upload did not start")
                 return
             }
-            for url in urls {
-                sdk.startUpload(withLocalPath: url.path, parent: parent, cancelToken: nil, options: MEGAUploadOptions())
+            // The engine reads each file (its fingerprint) before the upload starts: slow
+            // disks and iCloud files must not block the main thread.
+            await EngineQueue.run {
+                for path in paths {
+                    sdk.startUpload(withLocalPath: path, parent: parent, cancelToken: nil, options: MEGAUploadOptions())
+                }
             }
             notify(urls.count == 1 ? "Uploading \(urls[0].lastPathComponent)" : "Uploading \(urls.count) items",
                    symbol: "arrow.up.circle")

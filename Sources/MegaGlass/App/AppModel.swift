@@ -128,6 +128,7 @@ final class AppModel {
             self?.syncs.reload()
             self?.transfers.reset()
         }
+        session.onLoggedOut = { settings.clearFolderViews() }
         session.onSessionEnded = { [weak self] in self?.showMainWindow() }
         transfers.onFinished = { [weak self] item in
             if item.state == .failed, let message = item.errorMessage {

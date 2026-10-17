@@ -31,6 +31,25 @@ nonisolated enum SortKey: String, CaseIterable, Sendable {
         case .modified: ascending ? .modificationAsc : .modificationDesc
         }
     }
+
+    /// The engine has no Kind order. For Date Modified it puts folders in name order, because
+    /// MEGA keeps no modification time for folders; the app shows their creation date and
+    /// sorts by it.
+    var sortsInApp: Bool { self == .kind || self == .modified }
+}
+
+extension Location {
+    /// The key under which the view of this place is saved.
+    var viewKey: String {
+        switch self {
+        case let .folder(handle): String(handle)
+        case .incomingShares: "incomingShares"
+        case .outgoingShares: "outgoingShares"
+        case .publicLinks: "publicLinks"
+        case .favourites: "favourites"
+        case .recents: "recents"
+        }
+    }
 }
 
 struct Crumb: Hashable, Identifiable {
@@ -75,8 +94,10 @@ final class BrowserModel {
     var selection: Set<UInt64> = []
     /// Set by the New Folder menu command.
     var newFolderRequested = false
-    var sortKey: SortKey = .name
-    var ascending = true
+    private(set) var sortKey: SortKey = .name
+    private(set) var ascending = true
+    /// The view that the user chose for this place; nil shows the default view.
+    private(set) var viewMode: BrowserViewMode?
     var searchText = "" {
         didSet { if searchText != oldValue { scheduleSearch() } }
     }
@@ -93,9 +114,14 @@ final class BrowserModel {
     @ObservationIgnored private var changeSerial: Int
     @ObservationIgnored private let listingProvider: (@Sendable (Location, SortKey, Bool) async -> Listing)?
     @ObservationIgnored private let searchProvider: (@Sendable (String) async -> [NodeItem])?
+    /// Keeps the view and sort of each place. Without it (a folder link), they stay with the
+    /// window and are not saved.
+    @ObservationIgnored private let views: AppSettings?
+    /// The sort of a place that has no saved sort.
+    @ObservationIgnored private let defaultSort: (key: SortKey, ascending: Bool)
 
     init(engine: MegaEngine, start: Location, rootTitle: String = "Cloud Drive",
-         sortKey: SortKey = .name, ascending: Bool = true,
+         sortKey: SortKey = .name, ascending: Bool = true, views: AppSettings? = nil,
          listingProvider: (@Sendable (Location, SortKey, Bool) async -> Listing)? = nil,
          searchProvider: (@Sendable (String) async -> [NodeItem])? = nil) {
         self.engine = engine
@@ -103,9 +129,12 @@ final class BrowserModel {
         self.rootTitle = rootTitle
         self.sortKey = sortKey
         self.ascending = ascending
+        self.views = views
+        defaultSort = (sortKey, ascending)
         self.listingProvider = listingProvider
         self.searchProvider = searchProvider
         changeSerial = engine.nodeChange.serial
+        restoreView()
         load()
     }
 
@@ -121,6 +150,7 @@ final class BrowserModel {
     var canGoForward: Bool { !forward.isEmpty }
     var canGoUp: Bool { crumbs.count > 1 }
     var isFolderLink: Bool { engine.kind == .folderLink }
+    var remembersViews: Bool { views != nil }
     /// Uploads and new folders: a writable account folder, not the Rubbish Bin or search results.
     var canUpload: Bool { engine.kind == .account && canWrite && !isRubbish && !isSearching }
 
@@ -173,6 +203,7 @@ final class BrowserModel {
 
     private func navigate(_ target: Location) {
         location = target
+        restoreView()
         items = []
         itemIDs = []
         crumbs = []
@@ -191,7 +222,27 @@ final class BrowserModel {
         guard key != sortKey || ascending != self.ascending else { return }
         sortKey = key
         self.ascending = ascending
+        saveView()
         if isSearching { scheduleSearch(immediately: true) } else { load() }
+    }
+
+    func setViewMode(_ mode: BrowserViewMode) {
+        guard mode != viewMode else { return }
+        viewMode = mode
+        saveView()
+    }
+
+    /// The view and sort saved for this place, or the defaults.
+    private func restoreView() {
+        guard let views else { return }
+        let saved = views.folderView(for: location)
+        viewMode = saved?.mode
+        sortKey = saved?.sortKey ?? defaultSort.key
+        ascending = saved?.ascending ?? defaultSort.ascending
+    }
+
+    private func saveView() {
+        views?.setFolderView(FolderView(mode: viewMode, sortKey: sortKey, ascending: ascending), for: location)
     }
 
     func reload() {
@@ -228,7 +279,7 @@ final class BrowserModel {
                     }
                 }
             }
-            if key == .kind || !Self.engineSorted(target) {
+            if key.sortsInApp || !Self.engineSorted(target) {
                 let unsorted = listing.items
                 listing.items = await EngineQueue.run { Self.sort(unsorted, by: key, ascending: ascending) }
             }
@@ -330,8 +381,8 @@ final class BrowserModel {
                                                   locationType: 4, creationTimeFrame: nil, modificationTimeFrame: nil)
                     }
                     let list = sdk.search(with: filter, orderType: order, page: nil, cancelToken: token)
-                    let items = sdk.nodes(list).map { NodeItem($0) }
-                    return key == .kind ? Self.sort(items, by: key, ascending: ascending) : items
+                    let items = sdk.nodes(list).map { Self.item($0, sdk: sdk) }
+                    return key.sortsInApp ? Self.sort(items, by: key, ascending: ascending) : items
                 }
             }
             guard !Task.isCancelled, !token.isCancelled, serial == loadSerial else { return }

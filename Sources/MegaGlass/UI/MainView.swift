@@ -61,10 +61,10 @@ struct MainView: View {
             selection = .transfers
             app.transfersRequested = false
         }
-        .onChange(of: app.links.sessions.map(\.id)) { _, ids in
-            if case let .openLink(id) = selection, !ids.contains(id) {
-                selection = app.session.isSignedIn ? .cloudDrive : ids.last.map { .openLink($0) }
-            }
+        .onChange(of: app.links.sessions.map(\.id)) { old, ids in
+            guard case let .openLink(id) = selection, !ids.contains(id) else { return }
+            selection = LinkCenter.successor(of: id, before: old, after: ids).map { .openLink($0) }
+                ?? (app.session.isSignedIn ? .cloudDrive : nil)
         }
     }
 
@@ -113,7 +113,7 @@ struct MainView: View {
         resolvingTestFolder = true
         Task {
             if let handle = await TestRun.resolveFolder(app.engine.sdk) {
-                browser = BrowserModel(engine: app.engine, start: .folder(handle))
+                browser = BrowserModel(engine: app.engine, start: .folder(handle), views: app.settings)
             } else {
                 TestRun.log("FAIL test folder not found")
                 NSApp.terminate(nil)
@@ -129,7 +129,7 @@ struct MainView: View {
             // The root node takes the engine lock: not on the main thread.
             let root = await EngineQueue.run { sdk.rootNode?.handle }
             guard browser == nil, app.session.isSignedIn, generation == app.session.generation, let root else { return }
-            browser = BrowserModel(engine: app.engine, start: .folder(root))
+            browser = BrowserModel(engine: app.engine, start: .folder(root), views: app.settings)
             if selection == nil { selection = .cloudDrive }
         }
         #endif

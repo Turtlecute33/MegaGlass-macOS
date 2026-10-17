@@ -195,9 +195,9 @@ struct AppCommands: Commands {
         }
 
         CommandGroup(before: .toolbar) {
-            Button("as List") { app.settings.viewMode = .list }
+            Button("as List") { app.settings.setViewMode(.list, of: browser) }
                 .keyboardShortcut("1")
-            Button("as Grid") { app.settings.viewMode = .grid }
+            Button("as Grid") { app.settings.setViewMode(.grid, of: browser) }
                 .keyboardShortcut("2")
             Button(app.settings.showInspector ? "Hide Inspector" : "Show Inspector") { app.settings.showInspector.toggle() }
                 .keyboardShortcut("i", modifiers: [.command, .option])

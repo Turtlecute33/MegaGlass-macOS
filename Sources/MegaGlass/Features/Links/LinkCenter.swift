@@ -426,6 +426,13 @@ final class LinkCenter {
         sessions.removeAll()
     }
 
+    /// The link that shows after [closed] closes: the next one in the list, or the one before
+    /// it when it was the last. Nil when no link stays open.
+    nonisolated static func successor(of closed: UUID, before: [UUID], after: [UUID]) -> UUID? {
+        guard !after.isEmpty else { return nil }
+        return after[min(before.firstIndex(of: closed) ?? after.count, after.count - 1)]
+    }
+
     /// A link that you close. Not at quit: the caches of open links stay for the next run.
     private func discard(_ session: LinkSession) {
         session.close()

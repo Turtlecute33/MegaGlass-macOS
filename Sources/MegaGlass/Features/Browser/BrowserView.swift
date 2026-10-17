@@ -135,7 +135,7 @@ struct BrowserView: View {
             ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if model.items.isEmpty {
             emptyState
-        } else if settings.viewMode == .list {
+        } else if settings.viewMode(of: model) == .list {
             NodeTable(model: model, menu: menu, open: open)
         } else {
             NodeGrid(model: model, size: settings.gridSize, menu: menu, open: open)
@@ -176,7 +176,7 @@ struct BrowserView: View {
         }
 
         ToolbarItemGroup(placement: .primaryAction) {
-            Picker("View", selection: Binding(get: { settings.viewMode }, set: { settings.viewMode = $0 })) {
+            Picker("View", selection: Binding(get: { settings.viewMode(of: model) }, set: { settings.setViewMode($0, of: model) })) {
                 Label("List", systemImage: "list.bullet").tag(BrowserViewMode.list)
                 Label("Grid", systemImage: "square.grid.2x2").tag(BrowserViewMode.grid)
             }
@@ -193,7 +193,7 @@ struct BrowserView: View {
                     Text("Descending").tag(false)
                 }
                 .pickerStyle(.inline)
-                if settings.viewMode == .grid {
+                if settings.viewMode(of: model) == .grid {
                     Divider()
                     Picker("Icon Size", selection: Binding(get: { settings.gridSize }, set: { settings.gridSize = $0 })) {
                         Text("Small").tag(104.0)

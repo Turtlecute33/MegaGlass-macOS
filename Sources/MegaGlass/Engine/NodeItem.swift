@@ -64,7 +64,8 @@ nonisolated struct NodeItem: Identifiable, Hashable, Sendable {
         let ext = (name as NSString).pathExtension.lowercased()
         kind = isFolder ? .folder : FileKind(extension: ext)
         kindTitle = kind.title(extension: ext)
-        size = folderSize ?? node.size?.int64Value ?? 0
+        // The node size of a folder is not the size of its contents.
+        size = folderSize ?? (isFolder ? 0 : node.size?.int64Value ?? 0)
         created = node.creationTime ?? .distantPast
         modified = node.isFile() ? (node.modificationTime ?? created) : created
         hasThumbnail = kind.hasPictures && node.hasThumbnail()

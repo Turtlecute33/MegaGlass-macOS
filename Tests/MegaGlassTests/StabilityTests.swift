@@ -598,6 +598,68 @@ struct BrowserTests {
         let folder = NodeItem(id: 11, name: "Z", isFolder: true)
         #expect(BrowserModel.sort([items[0], folder], by: .name, ascending: false).first == folder)
     }
+
+    @Test func dateSortOrdersFoldersByTheirShownDate() async throws {
+        let (engine, root) = try makeEngine()
+        defer { engine.shutdown(); try? FileManager.default.removeItem(at: root) }
+        // In engine order for Date Modified: folders by name, then files by date.
+        let listing = Listing(items: [
+            NodeItem(id: 1, name: "A", isFolder: true, modified: Date(timeIntervalSince1970: 300)),
+            NodeItem(id: 2, name: "B", isFolder: true, modified: Date(timeIntervalSince1970: 100)),
+            NodeItem(id: 3, name: "C", isFolder: true, modified: Date(timeIntervalSince1970: 200)),
+            NodeItem(id: 4, name: "f", size: 1, modified: Date(timeIntervalSince1970: 50)),
+        ])
+        let model = BrowserModel(engine: engine, start: .folder(1), sortKey: .modified, ascending: true,
+                                 listingProvider: { _, _, _ in listing })
+        #expect(await eventually { model.items.map(\.id) == [2, 3, 1, 4] })
+        model.setSort(.modified, ascending: false)
+        #expect(await eventually { model.items.map(\.id) == [1, 3, 2, 4] })
+        model.stop()
+    }
+
+    @Test func eachPlaceKeepsItsViewAndSortAcrossLaunches() async throws {
+        let suite = "megaglass-tests-" + UUID().uuidString
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let (engine, root) = try makeEngine(kind: .account)
+        defer { engine.shutdown(); try? FileManager.default.removeItem(at: root) }
+        let settings = AppSettings(defaults: defaults)
+        let model = BrowserModel(engine: engine, start: .folder(1), views: settings, listingProvider: { _, _, _ in Listing() })
+        model.setSort(.size, ascending: false)
+        model.setViewMode(.grid)
+        model.go(to: .folder(2))
+        #expect(model.sortKey == .name && model.ascending)
+        #expect(settings.viewMode(of: model) == settings.viewMode)
+        model.setSort(.modified, ascending: true)
+        model.goBack()
+        #expect(model.sortKey == .size && !model.ascending)
+        #expect(settings.viewMode(of: model) == .grid)
+        model.stop()
+
+        // The next launch reads the same choices.
+        let next = AppSettings(defaults: defaults)
+        #expect(next.folderView(for: .folder(1)) == FolderView(mode: .grid, sortKey: .size, ascending: false))
+        #expect(next.folderView(for: .folder(2)) == FolderView(mode: nil, sortKey: .modified, ascending: true))
+        #expect(next.folderView(for: .incomingShares) == nil)
+        next.clearFolderViews()
+        #expect(AppSettings(defaults: defaults).folderView(for: .folder(1)) == nil)
+
+        // A folder link keeps its view only in the window: it changes the default view.
+        let link = BrowserModel(engine: engine, start: .folder(1), listingProvider: { _, _, _ in Listing() })
+        next.setViewMode(.grid, of: link)
+        #expect(next.viewMode == .grid && link.viewMode == nil)
+        link.stop()
+        #expect(FolderView(saved: "grid weight up") == nil)
+        #expect(FolderView(saved: "default kind desc") == FolderView(mode: nil, sortKey: .kind, ascending: false))
+    }
+
+    @Test func closingTheShownLinkShowsTheNextLink() {
+        let ids = (0..<3).map { _ in UUID() }
+        #expect(LinkCenter.successor(of: ids[1], before: ids, after: [ids[0], ids[2]]) == ids[2])
+        #expect(LinkCenter.successor(of: ids[2], before: ids, after: [ids[0], ids[1]]) == ids[1])
+        #expect(LinkCenter.successor(of: ids[0], before: ids, after: [ids[1], ids[2]]) == ids[1])
+        #expect(LinkCenter.successor(of: ids[0], before: [ids[0]], after: []) == nil)
+    }
 }
 
 @MainActor

@@ -158,6 +158,8 @@ final class Session {
     @ObservationIgnored let engine: MegaEngine
     @ObservationIgnored var onSignedIn: (() -> Void)?
     @ObservationIgnored var onSignedOut: (() -> Void)?
+    /// A logout that removed the saved session (not a stopped load, which keeps it).
+    @ObservationIgnored var onLoggedOut: (() -> Void)?
     /// MEGA ended the session: the login screen with the reason must show, also when the
     /// app runs with no window.
     @ObservationIgnored var onSessionEnded: (() -> Void)?
@@ -310,6 +312,7 @@ final class Session {
             }
         }
         do { try credentials.delete() } catch { onError?(error) }
+        onLoggedOut?()
         if local {
             // The engine keeps its node cache after a local logout; remove it here.
             if let localCache { await EngineQueue.run { AppPaths.removeContents(of: localCache) } }

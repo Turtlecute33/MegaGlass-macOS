@@ -393,6 +393,7 @@ struct PreviewView: View {
         self.player = player
         state = .media
         player.play()
+        Task { await playWhenLoadingKeepsUp(player) }
         #if MEGAGLASS_TESTS
         Task {
             try? await Task.sleep(for: .seconds(8))
@@ -440,6 +441,43 @@ struct PreviewView: View {
                 : .cannotPlay(Self.formatFailure(playerItem.error) + keyNote(stream?.route, routes: routes), stream: stream?.url)
             return
         }
+    }
+
+    /// AVPlayer waits for a large reserve when it estimates a slow network, and its estimate also
+    /// counts the slow start of a stream after a jump. When the loaded part grows faster than the
+    /// video plays, this wait is not necessary: the video plays at once, as after pause and play.
+    /// On a network that is too slow for the video, the player waits as before.
+    private func playWhenLoadingKeepsUp(_ player: AVPlayer) async {
+        var samples: [(at: Date, ahead: Double)] = []
+        while !Task.isCancelled, self.player === player {
+            try? await Task.sleep(for: .milliseconds(500))
+            guard player.timeControlStatus == .waitingToPlayAtSpecifiedRate,
+                  player.reasonForWaitingToPlay == .toMinimizeStalls,
+                  let ahead = Self.loadedAhead(player) else {
+                samples.removeAll()
+                continue
+            }
+            let now = Date()
+            samples.append((now, ahead))
+            samples.removeAll { now.timeIntervalSince($0.at) > 2.5 }
+            guard let first = samples.first else { continue }
+            let span = now.timeIntervalSince(first.at)
+            let rate = Double(player.defaultRate > 0 ? player.defaultRate : 1)
+            // At least 2 s loaded, and in the last 2 s the loaded part grew faster than playback.
+            if span >= 2, ahead >= 2, ahead - first.ahead >= span * rate {
+                player.playImmediately(atRate: Float(rate))
+                samples.removeAll()
+            }
+        }
+    }
+
+    /// Seconds of video loaded after the current time; nil without an item.
+    private static func loadedAhead(_ player: AVPlayer) -> Double? {
+        guard let item = player.currentItem else { return nil }
+        let time = player.currentTime()
+        return item.loadedTimeRanges.map(\.timeRangeValue)
+            .first { $0.containsTime(time) }
+            .map { $0.end.seconds - time.seconds } ?? 0
     }
 
     private static func formatFailure(_ error: (any Error)?) -> String {

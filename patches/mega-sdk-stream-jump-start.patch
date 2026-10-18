@@ -1,0 +1,25 @@
+diff --git a/include/mega/file_service/file_service_options.h b/include/mega/file_service/file_service_options.h
+index bced9e6..20723c9 100644
+--- a/include/mega/file_service/file_service_options.h
++++ b/include/mega/file_service/file_service_options.h
+@@ -82,10 +82,18 @@ struct ServiceOptions
+     // Note that this value is expressed as a power of two.
+     //
+     // I.e. An value of 10 here means align at a 1K boundary.
+-    std::uint64_t mJumpBackwardAlignment = 20;
++    //
++    // MegaGlass: 64K, the size of the smallest download. A new range downloads its
++    // aligned start before the data that was asked for: with 1M, that start alone could
++    // delay playback after a jump by seconds on a slow network.
++    std::uint64_t mJumpBackwardAlignment = 16;
+ 
+     // How far should we extend the beginning of a new range?
+-    std::chrono::milliseconds mJumpBackwardDistance{2000};
++    //
++    // MegaGlass: none. The extension (2 s at the measured speed) was downloaded before the
++    // data that was asked for, so a video waited for it after each jump: up to 36 s when the
++    // speed fell. A later read a little before the range is a small download.
++    std::chrono::milliseconds mJumpBackwardDistance{0};
+ 
+     // How far forward in milliseconds does a read have to be for us to consider it a jump?
+     std::chrono::milliseconds mJumpForwardDistance{3000};

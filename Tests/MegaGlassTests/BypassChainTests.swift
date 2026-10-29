@@ -124,7 +124,7 @@ struct BypassChainTests {
         }
         #expect(job.isFinished)
         center.shutdown()
-        UserDefaults().removePersistentDomain(forName: suite)
+        removeTestDefaults(suite)
         return job
     }
 
@@ -256,7 +256,7 @@ struct BypassChainTests {
         for _ in 0..<3 { _ = center.providers.filter(center.isEnabled) }
         #expect(reads == BypassProvider.all.count(where: \.needsKey))
         center.shutdown()
-        UserDefaults().removePersistentDomain(forName: suite)
+        removeTestDefaults(suite)
     }
 
     @Test func megaLinkInTheLinkItselfNeedsNoRequest() async throws {

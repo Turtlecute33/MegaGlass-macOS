@@ -620,7 +620,7 @@ struct BrowserTests {
     @Test func eachPlaceKeepsItsViewAndSortAcrossLaunches() async throws {
         let suite = "megaglass-tests-" + UUID().uuidString
         let defaults = try #require(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
+        defer { removeTestDefaults(suite) }
         let (engine, root) = try makeEngine(kind: .account)
         defer { engine.shutdown(); try? FileManager.default.removeItem(at: root) }
         let settings = AppSettings(defaults: defaults)
@@ -754,7 +754,7 @@ struct PlatformTests {
     @Test func deniedKeychainWritesCannotRestoreAnOldAccount() throws {
         let suite = "megaglass-credential-tests-" + UUID().uuidString
         let defaults = try #require(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
+        defer { removeTestDefaults(suite) }
         let backend = MemoryCredentials()
         backend.token = "old-fixture"
         func makeStore() -> KeychainSessionCredentials {
@@ -778,7 +778,7 @@ struct PlatformTests {
     @Test func corruptPreferencesAreBounded() throws {
         let suite = "megaglass-tests-" + UUID().uuidString
         let defaults = try #require(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
+        defer { removeTestDefaults(suite) }
         defaults.set(-100, forKey: "workerThreads")
         defaults.set(Int.max, forKey: "downloadConnections")
         defaults.set(-1, forKey: "uploadConnections")

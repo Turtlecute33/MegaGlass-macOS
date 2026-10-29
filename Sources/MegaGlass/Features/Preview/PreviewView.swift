@@ -720,6 +720,8 @@ nonisolated final class PreviewDownload: NSObject, MEGATransferDelegate, @unchec
         lock.withLock { progress = nil }
         if error.type == .apiOk, let path = transfer.path,
            URL(filePath: path).deletingLastPathComponent().standardizedFileURL.path == directory.standardizedFileURL.path {
+            // Quick Look loads no remote content for a quarantined file (HTML, SVG).
+            LocalFileSafety.quarantine(URL(filePath: path))
             gate.finish(.success(URL(filePath: path)))
         } else {
             gate.finish(.failure(MegaFailure(code: error.type.rawValue,

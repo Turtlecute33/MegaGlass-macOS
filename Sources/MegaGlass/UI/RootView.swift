@@ -37,14 +37,18 @@ struct RootView: View {
         .alert(item: $app.alert) { alert in
             Alert(title: Text(alert.title), message: Text(alert.message))
         }
-        .confirmationDialog("Open \(app.pendingLinks?.sorted.mega.count ?? 0) MEGA links?",
+        .confirmationDialog("Open \(app.pendingLinks.map { $0.sorted.mega.count + $0.sorted.protected.count } ?? 0) links?",
                             isPresented: Binding(get: { app.pendingLinks != nil }, set: { if !$0 { app.pendingLinks = nil } }),
                             presenting: app.pendingLinks) { pending in
             Button("Open Links") { app.handleIncoming(pending.sorted, source: pending.source, confirmed: true) }
         } message: { pending in
-            let count = pending.sorted.mega.count
-            Text((pending.source == .clipboard ? "You copied \(count) MEGA links." : "Another app sent \(count) MEGA links.")
-                 + (count > LinkCenter.openLimit ? " Only the first \(LinkCenter.openLimit) open." : ""))
+            let mega = pending.sorted.mega.count, protected = pending.sorted.protected.count
+            let links = [mega == 0 ? nil : mega == 1 ? "1 MEGA link" : "\(mega) MEGA links",
+                         protected == 0 ? nil : protected == 1 ? "1 link to bypass" : "\(protected) links to bypass"]
+                .compactMap { $0 }.joined(separator: " and ")
+            let services = protected > 0 ? " Bypass sends \(protected == 1 ? "that link" : "those links") to the enabled third-party services." : ""
+            let limit = mega > LinkCenter.openLimit ? " Only the first \(LinkCenter.openLimit) MEGA links open." : ""
+            Text((pending.source == .clipboard ? "You copied \(links)." : "Another app sent \(links).") + services + limit)
         }
         .sheet(isPresented: $app.showOpenLinks) {
             OpenLinksSheet()

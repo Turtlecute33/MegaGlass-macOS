@@ -61,6 +61,13 @@
 	</array>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.productivity</string>
+	<!-- Files that the app makes (downloads, syncs) get the quarantine flag. Not the app data in ~/Library. -->
+	<key>LSFileQuarantineEnabled</key>
+	<true/>
+	<key>LSFileQuarantineExcludedPathPatterns</key>
+	<array>
+		<string>~/Library/*</string>
+	</array>
 	<key>LSMinimumSystemVersion</key>
 	<string>26.0</string>
 	<key>NSAppTransportSecurity</key>

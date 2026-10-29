@@ -438,8 +438,8 @@ nonisolated final class TransferFeed: NSObject, MEGATransferDelegate, @unchecked
         record(transfer, error: error, finished: true)
     }
 
-    /// A file that you downloaded, alone or in a folder. Not quarantined: the files of syncs,
-    /// the preview cache and streams.
+    /// A file that you downloaded, alone or in a folder. Not the files of syncs, the preview
+    /// cache (PreviewDownload marks its files) and streams.
     static func isUserDownload(_ transfer: MEGATransfer) -> Bool {
         transfer.type == .download && !transfer.isFolderTransfer && !transfer.isStreamingTransfer
             && transfer.appData != TransferSnapshot.previewTag && !transfer.isSyncTransfer

@@ -73,9 +73,11 @@ NSString *(^folderDownloadNameFilter)(NSString *);
 std::string folderDownloadName(const std::string &name)
 {
     @autoreleasepool {
-        NSString *value = [[NSString alloc] initWithBytes:name.data() length:name.size() encoding:NSUTF8StringEncoding];
+        // A name that is not valid UTF-8 is read as Latin-1: the filter must always run.
+        NSString *value = [[NSString alloc] initWithBytes:name.data() length:name.size() encoding:NSUTF8StringEncoding]
+            ?: [[NSString alloc] initWithBytes:name.data() length:name.size() encoding:NSISOLatin1StringEncoding];
         NSString *filtered = value ? folderDownloadNameFilter(value) : nil;
-        return filtered.length ? std::string(filtered.UTF8String) : name;
+        return filtered.length ? std::string(filtered.UTF8String) : std::string("Untitled");
     }
 }
 

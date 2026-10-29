@@ -399,6 +399,8 @@ final class BypassCenter {
     }
 
     private func run(_ job: BypassJob) async {
+        // The local-address rules must be ready before the first web view of the job.
+        if usesWebViews { _ = await AdBlocker.loadLocalRules() }
         var assist: [BypassProvider] = []
         var links = await automatic(job.link, job: job, depth: 0, assist: &assist)
         job.releaseBrowser()
@@ -507,6 +509,8 @@ final class BypassCenter {
     private static let pageDepth = 1
     /// Time that each API service has alone before the next one starts too.
     private static let headStart: Duration = .seconds(5)
+    /// A captcha in the panel extends the wait for a page, but not past this time.
+    private static let captchaLimit: TimeInterval = 600
 
     private func automatic(_ link: String, job: BypassJob, depth: Int, assist: inout [BypassProvider]) async -> [String] {
         guard let original = URL(string: link), job.visit(original) else { return [] }
@@ -987,6 +991,7 @@ final class BypassCenter {
         }
 
         var deadline = Date().addingTimeInterval(interactive ? 180 : 45)
+        let limit = Date().addingTimeInterval(Self.captchaLimit)
         var captchaSince: Date?
         var clicks = 0
         var lastClick = Date.distantPast
@@ -1014,7 +1019,7 @@ final class BypassCenter {
                 // In step 1 nobody waits for a captcha: Turnstile often passes by itself in
                 // a few seconds; if not, the service waits for step 2.
                 if !interactive, Date().timeIntervalSince(captchaSince!) > 12 { return .needsYou }
-                if interactive { deadline = max(deadline, Date().addingTimeInterval(30)) }
+                if interactive { deadline = min(limit, max(deadline, Date().addingTimeInterval(30))) }
             } else {
                 captchaSince = nil
             }
@@ -1056,6 +1061,7 @@ final class BypassCenter {
         browser.load(url)
         await browser.waitUntilLoaded(timeout: 25)
         var deadline = Date().addingTimeInterval(seconds)
+        let limit = Date().addingTimeInterval(Self.captchaLimit)
         var lastCount = -1
         while Date() < deadline {
             guard !Task.isCancelled, !(interactive && skipRequested) else { return [] }
@@ -1075,7 +1081,7 @@ final class BypassCenter {
                 continue
             }
             if page.captcha, interactive {
-                deadline = max(deadline, Date().addingTimeInterval(30))
+                deadline = min(limit, max(deadline, Date().addingTimeInterval(30)))
             }
         }
         return []
@@ -1380,7 +1386,7 @@ final class BypassBrowser: NSObject, WKNavigationDelegate, WKUIDelegate {
         let gate = AsyncResultGate<String?>()
         let webView = webView
         Task {
-            let value = try? await webView.callAsyncJavaScript(script, arguments: arguments, in: nil, contentWorld: .page) as? String
+            let value = try? await webView.callAsyncJavaScript(script, arguments: arguments, in: nil, contentWorld: .defaultClient) as? String
             gate.finish(.success(value))
         }
         let timer = Task {

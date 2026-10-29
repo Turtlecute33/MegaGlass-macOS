@@ -55,8 +55,9 @@ and drag MegaGlass to Applications. To update, run `brew upgrade`.
 MegaGlass is alpha software. Keep a copy of important files.
 
 The app is signed, but Apple did not notarize it. On the first start, macOS blocks it. Click
-**Done**, then go to **System Settings → Privacy & Security** and click **Open Anyway**. You do
-this one time only: all releases have the same signing identity.
+**Done**, then go to **System Settings → Privacy & Security** and click **Open Anyway**. All
+releases have the same signing identity, so macOS keeps this approval after `brew upgrade`. If you
+update from a new disk image, do this again.
 
 <details>
 <summary><b>Uninstall</b></summary>
@@ -94,7 +95,7 @@ Without Homebrew, delete the app. Then, in Keychain Access, delete the items
   third-party services, and loads their pages. These services have their own privacy policies.
   The rip.linkvertise.lol service uses the API host trw.lat. Links from the clipboard watch and
   the browser router go to Bypass with no other step. An API key goes only to its own API host,
-  never on a redirect to another host.
+  never on a redirect to another host. The izen.lol page gets your izen.lol key in its address.
 - **Local network**: Bypass blocks addresses on this Mac and on the local network, by number or
   by local name (such as `.local`), also for the requests of a web page. It cannot block a public
   name that points to them.

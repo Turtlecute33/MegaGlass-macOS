@@ -315,7 +315,7 @@ final class AppModel {
         let open = Set(links.sessions.map { LinkParser.identity(of: $0.link) })
         var fresh = sorted
         fresh.mega = sorted.mega.filter { !open.contains(LinkParser.identity(of: $0)) }
-        if !confirmed, source == .clipboard || source == .scheme, fresh.mega.count > LinkCenter.askAbove {
+        if !confirmed, source == .clipboard || source == .scheme, fresh.mega.count + fresh.protected.count > LinkCenter.askAbove {
             pendingLinks = PendingLinks(sorted: fresh, source: source)
             showMainWindow()
             return
@@ -397,7 +397,7 @@ final class AppModel {
                 return
             }
             for node in nodes {
-                sdk.startDownloadNode(node, localPath: target, fileName: node.name.map(LocalFileSafety.filename),
+                sdk.startDownloadNode(node, localPath: target, fileName: LocalFileSafety.filename(node.name ?? "Untitled"),
                                       appData: nil, startFirst: false, cancelToken: nil,
                                       collisionCheck: .fingerprint, collisionResolution: .newWithN)
             }
@@ -410,7 +410,7 @@ final class AppModel {
     func download(publicNode node: MEGANode) {
         guard let folder = downloadFolder() else { return }
         let target = folder.path.hasSuffix("/") ? folder.path : folder.path + "/"
-        engine.sdk.startDownloadNode(node, localPath: target, fileName: node.name.map(LocalFileSafety.filename),
+        engine.sdk.startDownloadNode(node, localPath: target, fileName: LocalFileSafety.filename(node.name ?? "Untitled"),
                                      appData: nil, startFirst: false, cancelToken: nil,
                                      collisionCheck: .fingerprint, collisionResolution: .newWithN)
         notify("Downloading \(LocalFileSafety.displayName(node.name ?? "file"))", symbol: "arrow.down.circle")

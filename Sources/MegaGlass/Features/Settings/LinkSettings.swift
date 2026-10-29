@@ -48,7 +48,7 @@ struct LinkSettings: View {
                         NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.Desktop-Settings.extension")!)
                     }
                 }
-                Text("Like magnet links for a torrent app: set MegaGlass as the default web browser in Desktop & Dock. Then MEGA links that you click in other apps (Telegram, Mail, Discord) open here, and every other link goes on to the browser above at once. Links that you click inside the browser stay in the browser; use the clipboard for them.")
+                Text("Like magnet links for a torrent app: set MegaGlass as the default web browser in Desktop & Dock. Then MEGA links that you click in other apps (Telegram, Mail, Discord) open here. Link-protector links go to Bypass with no other step, and Bypass sends them to the enabled third-party services. Every other link goes on to the browser above at once. Links that you click inside the browser stay in the browser; use the clipboard for them.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } header: {

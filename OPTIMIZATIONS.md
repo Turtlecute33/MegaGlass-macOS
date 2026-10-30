@@ -36,7 +36,7 @@ To apply a shared item to a version that has no finding ID, select the shared ID
 | MEGAGLASS-MAC-OPT-02 | Stop empty and dead Preview windows (New Window item and window restore) | stability | S | low | applied |
 | MEGAGLASS-MAC-OPT-03 | Ask before Cancel All when more than one transfer runs | ui-ux | S | low | applied |
 | MEGAGLASS-MAC-OPT-04 | Keep the file extension out of the selection when you rename a file | ui-ux | S | low | applied |
-| MEGAGLASS-MAC-OPT-05 | Release the Bypass panel web view when no job needs the panel | battery | S | low | approved |
+| MEGAGLASS-MAC-OPT-05 | Release the Bypass panel web view when no job needs the panel | battery | S | low | applied |
 | MEGAGLASS-MAC-OPT-06 | Give the icon-only buttons an accessible name (all screens) | ui-ux | S | low | approved |
 | MEGAGLASS-MAC-OPT-07 | Add Download (⇧⌘D) and Copy Link (no shortcut) to the menu bar | ui-ux | S | low | approved |
 | MEGAGLASS-MAC-OPT-08 | Delete dead members and the duplicate Bypass timeout helper | minimalism | S | low | approved |
@@ -103,14 +103,15 @@ To apply a shared item to a version that has no finding ID, select the shared ID
 
 - **What**: withYou makes the panel BypassBrowser (a WKWebView with its own non-persistent data store) the first time an interactive Bypass needs it. No code sets it back to nil. givePanelOn only calls browser?.stop(). So the web view, its WebContent process, the locker page cache and the locker cookies stay until the app quits. The step-1 web views already follow a release rule (job.releaseBrowser).
 - **Where**: Sources/MegaGlass/Features/Bypass/BypassCenter.swift:463-473 (givePanelOn), :1099 (withYou), :1326-1338 (BypassBrowser.init); Sources/MegaGlass/Features/Bypass/BypassView.swift:154-158 (panel), :239-244 (WebPanel)
-- **Change**: In givePanelOn, in the branch where panelQueue is empty, set browser = nil after browser?.stop(). In BypassView, add .id(ObjectIdentifier(browser)) to WebPanel(webView: browser.webView). The .id line is necessary: WebPanel.updateNSView is empty, so a change from browser A to browser B in one update would keep the old view on screen.
+- **Change**: In givePanelOn, in the branch where panelQueue is empty, set browser = nil after browser?.stop(). In BypassView, add .id(ObjectIdentifier(browser.webView)) to WebPanel(webView: browser.webView). The .id line is necessary: WebPanel.updateNSView is empty, so a change from browser A to browser B in one update would keep the old view on screen. The id is the web view, not the browser: nothing keeps the old BypassBrowser alive, so a new one can get its address. The view on screen keeps the old web view alive, so a new web view cannot.
 - **Benefit**: After the last interactive Bypass ends, WebKit can free the panel web view and its WebContent process (typically tens of MB; estimate, not measured). The locker cookies in the non-persistent store also go at once. The panel shows the same empty state as before the first interactive Bypass.
 - **Evidence**: BypassCenter.swift:1099 `if browser == nil { browser = makeBrowser() }` is the only assignment. Other uses are browser?.stop() at 358, 377, 467 and optional reads. There is no WKScriptMessageHandler, so there is no retain cycle. withPanel appends to panelQueue on the MainActor before it suspends, so a queued job always finds a browser. givePanelOn clears it only when the queue is empty. BypassView.swift:242-243: makeNSView returns the given view, updateNSView is empty.
 - **Safety**: makeBrowser() still calls blockAds, and run() still awaits AdBlocker.loadLocalRules() before withYou (lines 402-403, from 18f15cc, not changed). Content world, ad rules, PublicAddress checks and the non-persistent store do not change. givePanelOn and withYou come from da8ac48 and 38474fa. No storage, preference or key change.
 - **Verify**: Memory gain not measured. Test by hand: run two interactive Bypass jobs in a row, then one more after the queue empties. The panel must show each new page.
 - **Effort**: S. **Risk**: low. **Net lines**: about +2 (estimate).
 - **Shared**: MEGAGLASS-SHARED-3, also in Windows, not listed (/Users/user/Documents/Github/MegaGlass-windows, src/MegaGlass/Features/Bypass/BypassCenter.cs:510-526 GivePanelOn).
-- **Status**: approved
+- **Verified**: ./scripts/test.sh (116 tests in 11 suites passed) and SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk swift build passed, with no compiler warnings in the changed files. Not checked: no run-time check of the Bypass panel (two interactive Bypass jobs in a row, then one more after the queue empties), and the memory gain is not measured. The tests run with no web views, so they do not reach the panel.
+- **Status**: applied
 
 ### MEGAGLASS-MAC-OPT-06: Give the icon-only buttons an accessible name (all screens)
 

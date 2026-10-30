@@ -152,7 +152,10 @@ struct BypassView: View {
 
             Group {
                 if let browser = center.browser {
+                    // A new web view needs a new view: updateNSView does not change it.
+                    // The id is the web view: the view on screen keeps it alive, so its address stays unique.
                     WebPanel(webView: browser.webView)
+                        .id(ObjectIdentifier(browser.webView))
                 } else {
                     Color.clear
                 }

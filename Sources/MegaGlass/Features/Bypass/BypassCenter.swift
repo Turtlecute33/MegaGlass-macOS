@@ -467,6 +467,8 @@ final class BypassCenter {
         browser?.stop()
         if panelQueue.isEmpty {
             panelBusy = false
+            // No link waits for the panel: release the web view, its process and its cookies.
+            browser = nil
         } else {
             panelQueue.removeFirst().turn.resume(returning: true)
         }

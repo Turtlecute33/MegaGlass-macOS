@@ -33,7 +33,7 @@ To apply a shared item to a version that has no finding ID, select the shared ID
 | ID | Finding | Area | Effort | Risk | Status |
 |---|---|---|---|---|---|
 | MEGAGLASS-MAC-OPT-01 | Read the engine transfer list once in loadExisting | stability | S | low | applied |
-| MEGAGLASS-MAC-OPT-02 | Stop empty and dead Preview windows (New Window item and window restore) | stability | S | low | approved |
+| MEGAGLASS-MAC-OPT-02 | Stop empty and dead Preview windows (New Window item and window restore) | stability | S | low | applied |
 | MEGAGLASS-MAC-OPT-03 | Ask before Cancel All when more than one transfer runs | ui-ux | S | low | approved |
 | MEGAGLASS-MAC-OPT-04 | Keep the file extension out of the selection when you rename a file | ui-ux | S | low | approved |
 | MEGAGLASS-MAC-OPT-05 | Release the Bypass panel web view when no job needs the panel | battery | S | low | approved |
@@ -68,7 +68,8 @@ To apply a shared item to a version that has no finding ID, select the shared ID
 - **Verify**: Test by hand on the built app: open the File menu before and after the change. Also make sure that a new preview window still opens at the last size (owner rule: keep window sizes).
 - **Effort**: S. **Risk**: low. **Net lines**: about +2 (estimate).
 - **Owner decision**: Keep preview-window restore (owner rule: keep window state across launches). Do not add .restorationBehavior(.disabled). Fix the two defects in a different way: (a) a restored Preview window loads its file again when the session phase becomes ready, so that it is not empty or dead; (b) File > New Window must not open an empty Preview window. You can add .commandsRemoved() to the Preview WindowGroup, because it does not change restore. If the comment at MegaGlassApp.swift:86-87 then has a different meaning, update it.
-- **Status**: approved
+- **Verified**: ./scripts/test.sh (116 tests in 11 suites passed) and SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk swift build passed, with no compiler warnings in the changed files. Not checked: no run-time check of the UI. The File menu with no New Window item, a restored preview window that loads when the account or its folder link is ready, and the preview window size are not tested by hand.
+- **Status**: applied
 
 ### MEGAGLASS-MAC-OPT-03: Ask before Cancel All when more than one transfer runs
 

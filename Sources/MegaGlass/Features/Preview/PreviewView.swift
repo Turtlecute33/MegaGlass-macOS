@@ -27,6 +27,8 @@ struct PreviewView: View {
     @State private var invalidated = false
     /// This window counts in `AppModel.previewEngines` for this engine ID.
     @State private var usedEngine: String?
+    /// Goes up to load the file again.
+    @State private var attempt = 0
     @FocusState private var focused: Bool
 
     /// Above this size, a preview asks first: it must decrypt the whole file.
@@ -47,11 +49,19 @@ struct PreviewView: View {
     private struct LoadKey: Hashable {
         let handle: UInt64?
         let allowLarge: Bool
+        let attempt: Int
     }
 
     private var shown: UInt64? { current ?? request?.handle }
     private var siblings: [UInt64] { request?.siblings ?? [] }
     private var index: Int? { shown.flatMap { siblings.firstIndex(of: $0) } }
+
+    /// The engine of the request has its files: the account or the folder link is open.
+    private var engineReady: Bool {
+        guard let request else { return false }
+        if request.engineID == app.engine.id { return app.session.isSignedIn }
+        return app.links.sessions.contains { $0.engine?.id == request.engineID && $0.state == .ready }
+    }
 
     var body: some View {
         content
@@ -83,14 +93,19 @@ struct PreviewView: View {
                 skip(by: (press.characters == "j" ? -1 : 1) * MediaPlayerView.skipSeconds)
                 return .handled
             }
-            .task(id: LoadKey(handle: shown, allowLarge: allowLargeDownload)) {
+            .task(id: LoadKey(handle: shown, allowLarge: allowLargeDownload, attempt: attempt)) {
                 if let shown, !invalidated { await load(shown) }
+            }
+            .onChange(of: engineReady) { _, ready in
+                // macOS can restore this window before its session is ready: then load the file again.
+                if ready, item == nil { attempt += 1 }
             }
             .onChange(of: app.session.generation) {
                 if request?.engineID == app.engine.id { invalidate() }
             }
             .onChange(of: app.links.sessions.map { $0.engine?.id }) {
-                if let request, app.engine(id: request.engineID) == nil { invalidate() }
+                // A restored window with no link engine yet waits until the link opens.
+                if let request, usedEngine != nil, app.engine(id: request.engineID) == nil { invalidate() }
             }
             .onDisappear(perform: stop)
     }

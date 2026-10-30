@@ -18,6 +18,7 @@ struct MegaGlassApp: App {
         .handlesExternalEvents(matching: [])
         .commands { AppCommands(app: app) }
 
+        // A preview window opens only for a file: File > New Window must not open an empty one.
         WindowGroup("Preview", id: "preview", for: PreviewRequest.self) { $request in
             PreviewView(request: request)
                 .environment(app)
@@ -25,6 +26,7 @@ struct MegaGlassApp: App {
         }
         .defaultSize(width: 960, height: 680)
         .handlesExternalEvents(matching: [])
+        .commandsRemoved()
 
         Settings {
             SettingsView()

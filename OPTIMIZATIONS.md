@@ -249,4 +249,4 @@ Checks that the owner must still do by hand on the built app (the tests do not r
 - MEGAGLASS-MAC-OPT-08: the media player skip keys (← → J L), and the Bypass API and page time limits ("No answer in time").
 - MEGAGLASS-SHARED-4: with VoiceOver on, VoiceOver reads the toast text.
 
-Windows: this pass changed only the macOS repo. Nothing here needs a Windows check. The Windows parts of the shared items (MEGAGLASS-WIN-OPT-04, MEGAGLASS-WIN-OPT-07, MEGAGLASS-WIN-OPT-09, and the Bypass panel release of MEGAGLASS-SHARED-3) are not done in this pass.
+Windows: this pass changed only the macOS repo. Nothing here needs a Windows check. The Windows parts of the shared items are done on branch optimize of /Users/user/Documents/Github/MegaGlass-windows: MEGAGLASS-WIN-OPT-04 (d65aef3), MEGAGLASS-WIN-OPT-07 (6186eb9), MEGAGLASS-WIN-OPT-09 (d9bb744) and the Bypass panel release of MEGAGLASS-SHARED-3 (3f98445). The OPTIMIZATIONS.md of that repo gives their Windows checks.

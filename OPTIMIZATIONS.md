@@ -35,7 +35,7 @@ To apply a shared item to a version that has no finding ID, select the shared ID
 | MEGAGLASS-MAC-OPT-01 | Read the engine transfer list once in loadExisting | stability | S | low | applied |
 | MEGAGLASS-MAC-OPT-02 | Stop empty and dead Preview windows (New Window item and window restore) | stability | S | low | applied |
 | MEGAGLASS-MAC-OPT-03 | Ask before Cancel All when more than one transfer runs | ui-ux | S | low | applied |
-| MEGAGLASS-MAC-OPT-04 | Keep the file extension out of the selection when you rename a file | ui-ux | S | low | approved |
+| MEGAGLASS-MAC-OPT-04 | Keep the file extension out of the selection when you rename a file | ui-ux | S | low | applied |
 | MEGAGLASS-MAC-OPT-05 | Release the Bypass panel web view when no job needs the panel | battery | S | low | approved |
 | MEGAGLASS-MAC-OPT-06 | Give the icon-only buttons an accessible name (all screens) | ui-ux | S | low | approved |
 | MEGAGLASS-MAC-OPT-07 | Add Download (⇧⌘D) and Copy Link (no shortcut) to the menu bar | ui-ux | S | low | approved |
@@ -96,7 +96,8 @@ To apply a shared item to a version that has no finding ID, select the shared ID
 - **Safety**: View change only. AppModel.rename, the name check (empty or "/") and remote name cleaning do not change. No storage, preference keys or security code.
 - **Verify**: Test by hand: photo.jpg selects photo; a folder and a name such as .env keep select-all.
 - **Effort**: S. **Risk**: low. **Net lines**: about +8 (estimate).
-- **Status**: approved
+- **Verified**: ./scripts/test.sh (116 tests in 11 suites passed) and SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk swift build passed, with no compiler warnings in the changed files. A temporary SwiftUI probe (not in the repo) with the same TextField, focus and onChange code, in a window and in a sheet, selected photo in photo.jpg and archive.tar in archive.tar.gz, and kept select-all for .env, README, photo. and a folder name. Not checked: no run-time check of the Rename sheet in the app (it needs a signed-in account).
+- **Status**: applied
 
 ### MEGAGLASS-MAC-OPT-05: Release the Bypass panel web view when no job needs the panel
 

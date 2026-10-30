@@ -373,7 +373,7 @@ struct BrowserView: View {
                 Task { await app.createFolder(named: name, in: folder, engine: model.engine) }
             }
         case let .rename(item):
-            NameSheet(title: "Rename", action: "Rename", initial: item.name) { name in
+            NameSheet(title: "Rename", action: "Rename", initial: item.name, selectsBaseName: !item.isFolder) { name in
                 Task { await app.rename(item.id, to: name, engine: model.engine) }
             }
         case let .move(ids):

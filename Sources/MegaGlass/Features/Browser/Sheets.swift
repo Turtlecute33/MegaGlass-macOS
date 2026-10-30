@@ -6,15 +6,18 @@ struct NameSheet: View {
     let title: String
     let action: String
     let initial: String
+    /// Select the name without its extension, as Finder does for a file.
+    var selectsBaseName = false
     let commit: (String) -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var name = ""
+    @State private var selection: TextSelection?
     @FocusState private var focused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text(title).font(.headline)
-            TextField("Name", text: $name)
+            TextField("Name", text: $name, selection: $selection)
                 .textFieldStyle(.roundedBorder)
                 .focused($focused)
                 .onSubmit(done)
@@ -33,6 +36,12 @@ struct NameSheet: View {
         .onAppear {
             name = initial
             focused = true
+        }
+        // The field selects all text when it gets the focus. Change the selection after that.
+        .onChange(of: focused) {
+            guard focused, selectsBaseName, !(name as NSString).pathExtension.isEmpty,
+                  let dot = name.lastIndex(of: ".") else { return }
+            selection = TextSelection(range: name.startIndex..<dot)
         }
     }
 

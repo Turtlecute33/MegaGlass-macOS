@@ -1,11 +1,11 @@
 # Optimizations
 
 Review of MegaGlass for macOS (megaglass-mac) on 2026-10-30, at commit 7ab21d9 on branch main.
-Status: review only. No change is applied yet. The owner selects the items to apply.
+Status: the approved items are applied on branch optimize. The results of the final check are in Results at the end.
 
 Rules for this list: the security-review changes (no 'Report:' commits; commit 18f15cc: quarantine previews and synced files, ask before many Bypass links) stay as they are. Every security mechanism (Keychain, quarantine, link checks, entitlements, the SDK patches in patches/) is intentional. No change to storage formats, database schemas, preference keys or encryption. Each applied item is one commit, so that you can revert it alone.
 
-Effort: S = under 1 hour, M = up to half a day, L = more. Status: proposed, approved, applied (<commit>), rejected. applied = done; git log --grep=<ID> shows the commit.
+Effort: S = under 1 hour, M = up to half a day, L = more. Status: proposed, approved, applied (<commit>), rejected, not applied: <reason>. applied = done; git log --grep=<ID> shows the commit.
 
 ## Summary
 
@@ -19,11 +19,11 @@ Other versions: Android at /Users/user/Documents/Github/android/MegaGlass-Androi
 
 | Shared ID | Problem | In this repo | Other versions | Fix once? |
 |---|---|---|---|---|
-| MEGAGLASS-SHARED-1 | Restart transfers and API calls when the network comes back | MEGAGLASS-MAC-OPT-10. Status: rejected (owner, 2026-10-30) for this version. | Android: not listed, app/src/main/kotlin/app/megaglass/android/MegaGlassApp.kt:73 AppGraph.init (no network callback; app/src never calls reconnect). Windows: not listed, src/MegaGlass/Model/AppModel.cs:81-147 AppModel ctor (no network handler; native/include/megaglass.h has no reconnect export). | No. Same root cause (SDK 7e4519c, v10.21.0, has no network monitor), but each app needs its own OS network observer. Windows also needs a native export (for example mg_reconnect). |
+| MEGAGLASS-SHARED-1 | Restart transfers and API calls when the network comes back | MEGAGLASS-MAC-OPT-10. Status: not applied: the owner rejected it (2026-10-30) for this version. | Android: not listed, app/src/main/kotlin/app/megaglass/android/MegaGlassApp.kt:73 AppGraph.init (no network callback; app/src never calls reconnect). Windows: not listed, src/MegaGlass/Model/AppModel.cs:81-147 AppModel ctor (no network handler; native/include/megaglass.h has no reconnect export). | No. Same root cause (SDK 7e4519c, v10.21.0, has no network monitor), but each app needs its own OS network observer. Windows also needs a native export (for example mg_reconnect). |
 | MEGAGLASS-SHARED-2 | Ask before Cancel All transfers | MEGAGLASS-MAC-OPT-03 | Windows: MEGAGLASS-WIN-OPT-04 (src/MegaGlass/Features/Transfers/TransfersPage.xaml.cs:157 OnCancelAllClick). Android already asks every time (TransfersScreen.kt:105, :176-185). | No. UI code in each app. WIN-OPT-04 asks every time; MAC-OPT-03 asks only when activeCount > 1, because owner rule /Users/user/Documents/Github/mac/CLAUDE.md:27 says "not for one item". activeCount counts all unfinished transfers, also the ones that the mac list filter hides. |
 | MEGAGLASS-SHARED-3 | Release the Bypass panel web view when no job needs the panel | MEGAGLASS-MAC-OPT-05 | Windows: not listed, src/MegaGlass/Features/Bypass/BypassCenter.cs:510-526 GivePanelOn, :1345-1355 WithYou. Android has no Bypass. | No. Windows must call Browser?.Close(), then set Browser = null and panelBrowser = null. |
 | MEGAGLASS-SHARED-4 | Make the screen reader read the toasts | Section MEGAGLASS-SHARED-4 (macOS) below. Status: applied. Sources/MegaGlass/App/AppModel.swift:204-212 notify; Sources/MegaGlass/UI/Components.swift:119-129 ToastView; Sources/MegaGlass/UI/RootView.swift:28-35 overlay. VoiceOver does not read the toast. | Windows: MEGAGLASS-WIN-OPT-07 (src/MegaGlass/MainWindow.xaml.cs:108-119 ShowToast). Android uses SnackbarHost, not affected. | No. One call in each app. Mac: AccessibilityNotification.Announcement(text).post() in AppModel.notify. |
-| MEGAGLASS-SHARED-5 | Remove the reload-needed path that the SDK never calls | Not listed. Status: rejected (owner, 2026-10-30) for this version. Sources/MegaGlass/Engine/MegaEngine.swift:23, :56, :100, :115-116, :183; Sources/MegaGlass/Features/Session/Session.swift:182-192; Tests/MegaGlassTests/StabilityTests.swift:275-291 | Windows: MEGAGLASS-WIN-OPT-02 (src/MegaGlass/Features/Session/Session.cs:139-150 and related). Android has no such path. | No. Delete in each code base: event case, engine property and reset, Session handler, test. Do not connect EVENT_RELOADING to fetchNodes. Mac: docs/MACOS_ALPHA_STABILIZATION_REPORT.md:83 and :87 (A08, A12) give the test logoutDuringReloadRejectsStaleCompletion as the logout-during-reload regression evidence. The mac part has no finding and no constraint check, so the owner must decide on it before any mac change. |
+| MEGAGLASS-SHARED-5 | Remove the reload-needed path that the SDK never calls | Not listed. Status: not applied: the owner rejected it (2026-10-30) for this version. Sources/MegaGlass/Engine/MegaEngine.swift:23, :56, :100, :115-116, :183; Sources/MegaGlass/Features/Session/Session.swift:182-192; Tests/MegaGlassTests/StabilityTests.swift:275-291 | Windows: MEGAGLASS-WIN-OPT-02 (src/MegaGlass/Features/Session/Session.cs:139-150 and related). Android has no such path. | No. Delete in each code base: event case, engine property and reset, Session handler, test. Do not connect EVENT_RELOADING to fetchNodes. Mac: docs/MACOS_ALPHA_STABILIZATION_REPORT.md:83 and :87 (A08, A12) give the test logoutDuringReloadRejectsStaleCompletion as the logout-during-reload regression evidence. The mac part has no finding and no constraint check, so the owner must decide on it before any mac change. |
 | MEGAGLASS-SHARED-6 | Delete the dead members that Windows took over from the macOS app | MEGAGLASS-MAC-OPT-08 | Windows: MEGAGLASS-WIN-OPT-09 (AppPaths.cs:27 Avatars, TransferItem.cs:14 StartedAt, MegaEngine.cs:802 SyncErrorText), and not listed: TransferItem.ParentPath and NodeHandle (TransferItem.cs:21-22, :64, :75-76; MegaEngine.cs:26-27, :56-57). Android does not have them. | No. Separate commits in each code base. Windows keeps the MgTransferInfo struct fields and the native export mg_sync_error_text. |
 
 To apply a shared item to a version that has no finding ID, select the shared ID and name the version.
@@ -40,8 +40,8 @@ To apply a shared item to a version that has no finding ID, select the shared ID
 | MEGAGLASS-MAC-OPT-06 | Give the icon-only buttons an accessible name (all screens) | ui-ux | S | low | applied |
 | MEGAGLASS-MAC-OPT-07 | Add Download (⇧⌘D) and Copy Link (no shortcut) to the menu bar | ui-ux | S | low | applied |
 | MEGAGLASS-MAC-OPT-08 | Delete dead members and the duplicate Bypass timeout helper | minimalism | S | low | applied |
-| MEGAGLASS-MAC-OPT-09 | Build only the app product, and link it without exported symbols | minimalism | S | medium | rejected (owner, 2026-10-30) |
-| MEGAGLASS-MAC-OPT-10 | Restart transfers and API calls when the network comes back | stability | S | medium | rejected (owner, 2026-10-30) |
+| MEGAGLASS-MAC-OPT-09 | Build only the app product, and link it without exported symbols | minimalism | S | medium | not applied: the owner rejected it (2026-10-30) |
+| MEGAGLASS-MAC-OPT-10 | Restart transfers and API calls when the network comes back | stability | S | medium | not applied: the owner rejected it (2026-10-30) |
 | MEGAGLASS-SHARED-4 | VoiceOver reads the toasts (macOS) | ui-ux | S | low | applied |
 
 ### MEGAGLASS-MAC-OPT-01: Read the engine transfer list once in loadExisting
@@ -163,7 +163,7 @@ To apply a shared item to a version that has no finding ID, select the shared ID
 - **Safety**: Build script only. No source, storage, preference, Keychain or key change. Hardened runtime, signing identity, codesign order (strip, then sign), keychain unlock and lock, quarantine and the SDK patches stay. Line 22 comes from 0f02086 (curl and OpenSSL build commit, which moved it below the PINS check), not from 18f15cc.
 - **Verify**: Two review findings merged that edit the same line. Keep two commits, so that you can revert the medium-risk linker flag alone. Not verified without a build: whether ld also turns hidden globals into locals that strip -x removes. The 554 KB trie gain does not depend on that.
 - **Effort**: S. **Risk**: medium. **Net lines**: about +1 (estimate).
-- **Status**: rejected (owner, 2026-10-30)
+- **Status**: not applied: the owner rejected it (2026-10-30)
 
 ### MEGAGLASS-MAC-OPT-10: Restart transfers and API calls when the network comes back
 
@@ -176,7 +176,7 @@ To apply a shared item to a version that has no finding ID, select the shared ID
 - **Verify**: Test with a disposable account: start a large download, turn Wi-Fi off for 15 minutes, turn it on, and record the time until bytes move, before and after the change.
 - **Effort**: S. **Risk**: medium. **Net lines**: about +12 (estimate).
 - **Shared**: MEGAGLASS-SHARED-1, also in Android, not listed (/Users/user/Documents/Github/android/MegaGlass-Android) and Windows, not listed (/Users/user/Documents/Github/MegaGlass-windows). The three apps pin the same SDK commit 7e4519c. Each app needs its own OS observer.
-- **Status**: rejected (owner, 2026-10-30)
+- **Status**: not applied: the owner rejected it (2026-10-30)
 
 ### MEGAGLASS-SHARED-4: VoiceOver reads the toasts (macOS)
 
@@ -205,3 +205,48 @@ To apply a shared item to a version that has no finding ID, select the shared ID
 - Test seams (SessionAuthentication, SessionCredentials, injectable closures) let tests run offline. They are not over-abstraction.
 - UI: clear empty, loading and error states; confirmations for bulk destructive actions; fixed-width live numbers; view state for each place kept across launches; toasts; drag and drop; Go, File and Window menus.
 - Artifact build/app.noindex is version 0.2.3, the same as Resources/Info.plist, and was built after HEAD 7ab21d9. Artifact numbers match the current code.
+
+## Results
+
+Final check on 2026-10-30 at dfefc81 (branch optimize), on this Mac (Command Line Tools, Swift 6.4, no Xcode). No device and no APK: this is the macOS app.
+
+Size of the release executable. Both binaries record the same ld version (27037.1) and SDK version. The Swift 6.4 toolchain on this Mac is from 2026-08-26, older than both builds. The after build used SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk, as build-app.sh does. No DMG was built.
+
+| Executable | Before (7ab21d9) | After (dfefc81) | Change |
+|---|---|---|---|
+| After strip -x, as build-app.sh ships it (after: a stripped copy) | 15,526,464 bytes (build/app.noindex, 0.2.3) | 15,618,008 bytes | +91,544 bytes (+0.6 %) |
+| .build/release/MegaGlass, not stripped | 25,098,456 bytes | 25,175,224 bytes | +76,768 bytes |
+
+MEGAGLASS-MAC-OPT-09 (the size item) is not applied, so no item made the executable smaller. The small increase probably comes from the new UI code (menu commands, dialog, rename selection, preview reload).
+
+Checks, one command at a time, in this order:
+
+| Command | Result |
+|---|---|
+| ./scripts/test.sh | pass: 116 tests in 11 suites passed after 8.2 seconds. |
+| swift build -c release | fail: 377 errors in 17 files. 210 errors say "external macro implementation type 'SwiftUIMacros.StateMacro' could not be found for macro 'State()'"; the other errors follow from them ('$name' not in scope, 'self' is immutable). |
+| SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk swift build -c release (extra check of the cause) | pass: "Build complete!" No Swift warning; only the ld "search path not found" warnings. |
+
+Cause of the swift build -c release failure: the build environment, not a commit of this branch. Without SDKROOT, the command uses the macOS 27 SDK of the Command Line Tools. That SDK declares @State as a macro whose plugin ships only with Xcode. scripts/build-app.sh:13-17 and scripts/test.sh:6-8 set SDKROOT to the 26.5 SDK for this reason. The errors are also in files that no commit of this branch changes (AccountView, ContactsView, LoginView, RootView). No commit in git log --grep=Optimization changes Package.swift or scripts/.
+
+Earlier test note: during MEGAGLASS-MAC-OPT-03, one run of ./scripts/test.sh said "116 tests in 11 suites failed with 5 issues". The output was cut, and the failure did not occur again (3 more runs passed, and this final run passed).
+
+Items that are not applied:
+
+- MEGAGLASS-MAC-OPT-09: the owner rejected it (2026-10-30).
+- MEGAGLASS-MAC-OPT-10 and MEGAGLASS-SHARED-1: the owner rejected them (2026-10-30) for this version.
+- MEGAGLASS-SHARED-5: the owner rejected it (2026-10-30) for this version.
+
+Checks that the owner must still do by hand on the built app (the tests do not reach the views, menus or web views):
+
+- MEGAGLASS-MAC-OPT-01: log in with a large resumed queue on a disposable account. The crash fix is traced from the code, not reproduced.
+- MEGAGLASS-MAC-OPT-02: the File menu has no New Window item for previews (also try ⌘N). A restored preview window loads when the account is ready, and a restored folder-link window loads when you open the link in the main window. A new preview window opens at the last size. Known limits: the restored window shows "The file is not available." for a short time; if the restore fails and you then log in by hand, the window shows "This session has closed".
+- MEGAGLASS-MAC-OPT-03: Cancel All with one transfer cancels at once. With two or more transfers, the dialog shows the full count.
+- MEGAGLASS-MAC-OPT-04: Rename photo.jpg selects photo. A folder and .env keep select-all.
+- MEGAGLASS-MAC-OPT-05: run two interactive Bypass jobs in a row, then one more after the queue empties. The panel must show each new page. The memory gain is not measured. The first review of this item did not pass (commit b914b4f, .id(ObjectIdentifier(browser))). The branch has the amended commit 01eaf52, which uses .id(ObjectIdentifier(browser.webView)). No review result of 01eaf52 is recorded.
+- MEGAGLASS-MAC-OPT-06: use VoiceOver (⌘F5) on the Transfers, Sync and Versions rows and on the Bypass ad toggle. The icons must look as before. The Bypass order arrows show Move Up and Move Down.
+- MEGAGLASS-MAC-OPT-07: File > Download (⇧⌘D) and File > Copy Link in list and grid mode. Copy Link is disabled in the Rubbish Bin.
+- MEGAGLASS-MAC-OPT-08: the media player skip keys (← → J L), and the Bypass API and page time limits ("No answer in time").
+- MEGAGLASS-SHARED-4: with VoiceOver on, VoiceOver reads the toast text.
+
+Windows: this pass changed only the macOS repo. Nothing here needs a Windows check. The Windows parts of the shared items (MEGAGLASS-WIN-OPT-04, MEGAGLASS-WIN-OPT-07, MEGAGLASS-WIN-OPT-09, and the Bypass panel release of MEGAGLASS-SHARED-3) are not done in this pass.

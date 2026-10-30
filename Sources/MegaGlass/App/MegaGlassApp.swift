@@ -175,6 +175,13 @@ struct AppCommands: Commands {
                 .keyboardShortcut("u", modifiers: [.command, .shift])
                 .disabled(browser?.canUpload != true)
             Divider()
+            Button("Download") { download() }
+                .keyboardShortcut("d", modifiers: [.command, .shift])
+                .disabled(browser?.selection.isEmpty != false)
+            // No shortcut: one stray key chord must not make public links.
+            Button("Copy Link") { copyLinks() }
+                .disabled(!canCopyLinks)
+            Divider()
             Button("Open Links…") { app.showOpenLinks = true }
                 .keyboardShortcut("l")
             Button("Open Links from Clipboard") { app.openLinksFromClipboard() }
@@ -214,5 +221,21 @@ struct AppCommands: Commands {
     private func upload(folders: Bool) {
         guard let browser, browser.canUpload, let folder = browser.currentFolder else { return }
         app.chooseAndUpload(to: folder, folders: folders)
+    }
+
+    private func download() {
+        guard let browser else { return }
+        app.download(browser.selectedItems.map(\.id), from: browser.engine)
+    }
+
+    /// The same guard as Copy Link in the browser context menu.
+    private var canCopyLinks: Bool {
+        browser.map { $0.engine.kind == .account && !$0.isRubbish && !$0.selection.isEmpty } ?? false
+    }
+
+    private func copyLinks() {
+        guard let browser, canCopyLinks else { return }
+        let handles = browser.selectedItems.map(\.id)
+        Task { await app.copyLinks(handles) }
     }
 }

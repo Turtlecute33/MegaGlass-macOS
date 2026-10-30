@@ -3,6 +3,7 @@ import SwiftUI
 struct TransfersView: View {
     @Environment(AppModel.self) private var app
     @State private var filter: Filter = .all
+    @State private var confirmCancelAll = false
 
     enum Filter: String, CaseIterable {
         case all = "All", downloads = "Downloads", uploads = "Uploads", finished = "Finished"
@@ -55,13 +56,19 @@ struct TransfersView: View {
                 }
                 .help("Remove finished transfers from the list")
                 Button(role: .destructive) {
-                    transfers.cancelAll()
+                    // Ask only for more than one transfer (owner rule: not for one item).
+                    if transfers.activeCount > 1 { confirmCancelAll = true } else { transfers.cancelAll() }
                 } label: {
                     Label("Cancel All", systemImage: "xmark.circle")
                 }
                 .help("Cancel all transfers")
                 .disabled(!transfers.hasActivity)
             }
+        }
+        .confirmationDialog("Cancel all \(transfers.activeCount) transfers?", isPresented: $confirmCancelAll) {
+            Button("Stop All Transfers", role: .destructive) { transfers.cancelAll() }
+        } message: {
+            Text("You cannot retry cancelled transfers.")
         }
     }
 

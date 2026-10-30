@@ -34,7 +34,7 @@ To apply a shared item to a version that has no finding ID, select the shared ID
 |---|---|---|---|---|---|
 | MEGAGLASS-MAC-OPT-01 | Read the engine transfer list once in loadExisting | stability | S | low | applied |
 | MEGAGLASS-MAC-OPT-02 | Stop empty and dead Preview windows (New Window item and window restore) | stability | S | low | applied |
-| MEGAGLASS-MAC-OPT-03 | Ask before Cancel All when more than one transfer runs | ui-ux | S | low | approved |
+| MEGAGLASS-MAC-OPT-03 | Ask before Cancel All when more than one transfer runs | ui-ux | S | low | applied |
 | MEGAGLASS-MAC-OPT-04 | Keep the file extension out of the selection when you rename a file | ui-ux | S | low | approved |
 | MEGAGLASS-MAC-OPT-05 | Release the Bypass panel web view when no job needs the panel | battery | S | low | approved |
 | MEGAGLASS-MAC-OPT-06 | Give the icon-only buttons an accessible name (all screens) | ui-ux | S | low | approved |
@@ -83,7 +83,8 @@ To apply a shared item to a version that has no finding ID, select the shared ID
 - **Effort**: S. **Risk**: low. **Net lines**: about +8 (estimate).
 - **Shared**: MEGAGLASS-SHARED-2, also in MEGAGLASS-WIN-OPT-04 (/Users/user/Documents/Github/MegaGlass-windows). Note: WIN-OPT-04 asks every time. The mac filter (TransfersView.swift:5-18) can hide a running transfer while the button is enabled by hasActivity (:63). activeCount counts all unfinished transfers, also hidden ones, so the dialog gives the full count. Here, ask only when more than one transfer runs, because the owner rule says "not for one item".
 - **Owner decision**: Ask only when more than one transfer runs (owner rule: not for one item). Ignore the note in Shared that WIN-OPT-04 asks every time.
-- **Status**: approved
+- **Verified**: ./scripts/test.sh (116 tests in 11 suites passed) and SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk swift build passed, with no compiler warnings in the app sources. Not checked: no run-time check of the UI. The dialog with two or more transfers, and the cancel at once with one transfer, are not tested by hand.
+- **Status**: applied
 
 ### MEGAGLASS-MAC-OPT-04: Keep the file extension out of the selection when you rename a file
 

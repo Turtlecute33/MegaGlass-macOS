@@ -235,7 +235,8 @@ final class TransferCenter {
         let clearPreviews = !clearedOldPreviews
         clearedOldPreviews = true
         let snapshots = await EngineQueue.run {
-            let transfers = (0..<sdk.transfers.size).compactMap { sdk.transfers.transfer(at: $0) }
+            let list = sdk.transfers
+            let transfers = (0..<list.size).compactMap { list.transfer(at: $0) }
             if clearPreviews {
                 for transfer in transfers where transfer.appData == TransferSnapshot.previewTag {
                     sdk.cancelTransfer(transfer)

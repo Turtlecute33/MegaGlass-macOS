@@ -32,7 +32,7 @@ To apply a shared item to a version that has no finding ID, select the shared ID
 
 | ID | Finding | Area | Effort | Risk | Status |
 |---|---|---|---|---|---|
-| MEGAGLASS-MAC-OPT-01 | Read the engine transfer list once in loadExisting | stability | S | low | approved |
+| MEGAGLASS-MAC-OPT-01 | Read the engine transfer list once in loadExisting | stability | S | low | applied |
 | MEGAGLASS-MAC-OPT-02 | Stop empty and dead Preview windows (New Window item and window restore) | stability | S | low | approved |
 | MEGAGLASS-MAC-OPT-03 | Ask before Cancel All when more than one transfer runs | ui-ux | S | low | approved |
 | MEGAGLASS-MAC-OPT-04 | Keep the file extension out of the selection when you rename a file | ui-ux | S | low | approved |
@@ -54,7 +54,8 @@ To apply a shared item to a version that has no finding ID, select the shared ID
 - **Safety**: The method reads the same data and cancels the same old preview transfers. No change to the transfer cache, storage, schemas, preference keys, Keychain or key handling. The line comes from 38474fa, not from 18f15cc. No new dependency.
 - **Verify**: Re-read line 238 and MEGATransferList.mm:56-57: the repeated read and the missing NULL check are present. Verify with scripts/test.sh. A live check needs a disposable account with a large resumed queue.
 - **Effort**: S. **Risk**: low. **Net lines**: about +1 (estimate).
-- **Status**: approved
+- **Verified**: ./scripts/test.sh (116 tests in 11 suites passed) and SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk swift build passed. Not checked: no run-time login with a large resumed queue (needs a disposable account), so the crash fix is not reproduced live.
+- **Status**: applied
 
 ### MEGAGLASS-MAC-OPT-02: Stop empty and dead Preview windows (New Window item and window restore)
 

@@ -63,15 +63,12 @@ typedef NS_ENUM(NSInteger, MGSyncRunState) {
 @property (nonatomic, readonly) MGSyncRunState runState;
 @property (nonatomic, readonly) NSInteger error;
 @property (nonatomic, readonly, copy) NSString *errorDescription;
-@property (nonatomic, readonly) NSInteger warning;
 @end
 
 @interface MGSyncStats : NSObject
 @property (nonatomic, readonly) uint64_t backupId;
 @property (nonatomic, readonly) BOOL scanning;
 @property (nonatomic, readonly) BOOL syncing;
-@property (nonatomic, readonly) NSInteger folderCount;
-@property (nonatomic, readonly) NSInteger fileCount;
 @property (nonatomic, readonly) NSInteger uploadCount;
 @property (nonatomic, readonly) NSInteger downloadCount;
 @end
@@ -82,7 +79,6 @@ typedef NS_ENUM(NSInteger, MGSyncRunState) {
 @property (nonatomic, readonly, copy) NSArray<NSNumber *> *pathProblems;
 @property (nonatomic, readonly, copy) NSArray<NSString *> *localPaths;
 @property (nonatomic, readonly, copy) NSArray<NSString *> *cloudPaths;
-@property (nonatomic, readonly) BOOL detectedCloudSide;
 @end
 
 @protocol MGSyncControllerDelegate <NSObject>
@@ -119,8 +115,6 @@ typedef void (^MGRequestCompletion)(NSInteger errorCode, NSString *_Nullable err
 - (void)setSync:(uint64_t)backupId running:(BOOL)running completion:(MGRequestCompletion)completion;
 - (void)rescanSync:(uint64_t)backupId;
 - (void)fetchStallsWithCompletion:(void (^)(NSArray<MGSyncStall *> *stalls))completion;
-
-+ (NSString *)descriptionForSyncError:(NSInteger)error;
 
 @end
 

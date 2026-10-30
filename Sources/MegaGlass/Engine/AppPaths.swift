@@ -23,7 +23,6 @@ nonisolated enum AppPaths {
     static func linkEngine(_ id: String) -> URL { ensure(caches.appending(path: "links/\(id)", directoryHint: .isDirectory)) }
     static func thumbnails(_ scope: String) -> URL { ensure(caches.appending(path: "thumbnails/\(scope)", directoryHint: .isDirectory)) }
     static var previews: URL { ensure(caches.appending(path: "previews", directoryHint: .isDirectory)) }
-    static var avatars: URL { ensure(caches.appending(path: "avatars", directoryHint: .isDirectory)) }
 
     /// Decrypted content lives in folders that only this user can read.
     @discardableResult

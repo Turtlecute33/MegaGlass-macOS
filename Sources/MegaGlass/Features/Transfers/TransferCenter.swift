@@ -13,8 +13,6 @@ nonisolated struct TransferSnapshot: Sendable {
     let isDownload: Bool
     let name: String
     let path: String?
-    let parentPath: String?
-    let nodeHandle: UInt64
     let parentHandle: UInt64
     let totalBytes: Int64
     let transferredBytes: Int64
@@ -32,8 +30,6 @@ nonisolated struct TransferSnapshot: Sendable {
         self.isDownload = isDownload
         self.name = name
         path = nil
-        parentPath = nil
-        nodeHandle = invalidHandle
         parentHandle = invalidHandle
         self.totalBytes = totalBytes
         self.transferredBytes = transferredBytes
@@ -50,8 +46,6 @@ nonisolated struct TransferSnapshot: Sendable {
         isDownload = transfer.type == .download
         name = LocalFileSafety.displayName(transfer.fileName ?? (transfer.path as NSString?)?.lastPathComponent ?? "Item")
         path = transfer.path
-        parentPath = transfer.parentPath
-        nodeHandle = transfer.nodeHandle
         parentHandle = transfer.parentHandle
         totalBytes = transfer.totalBytes
         transferredBytes = transfer.transferredBytes
@@ -73,11 +67,8 @@ final class TransferItem: Identifiable {
     let id: Int
     let isDownload: Bool
     let isFolder: Bool
-    let startedAt = Date()
     var name: String
     var path: String?
-    var parentPath: String?
-    var nodeHandle: UInt64
     var parentHandle: UInt64
     var totalBytes: Int64 = 0
     var transferredBytes: Int64 = 0
@@ -92,7 +83,6 @@ final class TransferItem: Identifiable {
         isDownload = snapshot.isDownload
         isFolder = snapshot.isFolder
         name = snapshot.name
-        nodeHandle = snapshot.nodeHandle
         parentHandle = snapshot.parentHandle
         update(snapshot)
     }
@@ -102,8 +92,6 @@ final class TransferItem: Identifiable {
         guard finishedAt == nil else { return }
         if name != snapshot.name { name = snapshot.name }
         path = snapshot.path
-        parentPath = snapshot.parentPath
-        if snapshot.nodeHandle != invalidHandle { nodeHandle = snapshot.nodeHandle }
         if totalBytes != snapshot.totalBytes { totalBytes = snapshot.totalBytes }
         if transferredBytes != snapshot.transferredBytes { transferredBytes = snapshot.transferredBytes }
         if speed != snapshot.speed { speed = snapshot.speed }

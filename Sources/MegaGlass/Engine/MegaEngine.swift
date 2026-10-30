@@ -122,16 +122,6 @@ final class MegaEngine {
             onFatalError?(reason)
         }
     }
-
-    // MARK: Reads (run on the engine read queue)
-
-    nonisolated func item(for handle: UInt64) async -> NodeItem? {
-        await EngineQueue.run { [sdk] in sdk.node(forHandle: handle).map { NodeItem($0) } }
-    }
-
-    nonisolated func node(_ handle: UInt64) -> MEGANode? {
-        sdk.node(forHandle: handle)
-    }
 }
 
 /// Receives global engine callbacks on a background queue and sends small summaries.

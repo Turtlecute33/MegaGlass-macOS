@@ -803,10 +803,8 @@ final class MediaPlayerView: AVPlayerView {
         let isArrow = event.keyCode == Self.leftArrow || event.keyCode == Self.rightArrow
         if isArrow, flags.contains(.option) || flags.contains(.command) {
             if !event.isARepeat { navigate?(direction) }
-        } else if let onSkip {
-            onSkip(Double(direction) * Self.skipSeconds)
-        } else if let player {
-            Self.skip(player, by: Double(direction) * Self.skipSeconds)
+        } else {
+            onSkip?(Double(direction) * Self.skipSeconds)
         }
     }
 

@@ -131,8 +131,6 @@ final class ClipboardWatcher {
     /// Once for each run: a copy came while macOS denies access to the clipboard.
     @ObservationIgnored var onDenied: (() -> Void)?
 
-    var isRunning: Bool { timer != nil }
-
     func setEnabled(_ enabled: Bool) {
         timer?.invalidate()
         timer = nil

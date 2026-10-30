@@ -193,7 +193,6 @@ MegaRequestListener *completionListener(MGRequestCompletion completion)
         _runState = (MGSyncRunState)sync->getRunState();
         _error = sync->getError();
         _errorDescription = _error ? ownedString(MegaSync::getMegaSyncErrorCode(sync->getError())) : @"";
-        _warning = sync->getWarning();
     }
     return self;
 }
@@ -209,8 +208,6 @@ MegaRequestListener *completionListener(MGRequestCompletion completion)
         _backupId = stats->getBackupId();
         _scanning = stats->isScanning();
         _syncing = stats->isSyncing();
-        _folderCount = stats->getFolderCount();
-        _fileCount = stats->getFileCount();
         _uploadCount = stats->getUploadCount();
         _downloadCount = stats->getDownloadCount();
     }
@@ -244,7 +241,6 @@ MegaRequestListener *completionListener(MGRequestCompletion completion)
         _pathProblems = [problems copy];
         _localPaths = local.array;
         _cloudPaths = cloud.array;
-        _detectedCloudSide = stall->detectedCloudSide();
     }
     return self;
 }
@@ -488,11 +484,6 @@ private:
             done(stalls);
         });
     }));
-}
-
-+ (NSString *)descriptionForSyncError:(NSInteger)error
-{
-    return ownedString(MegaSync::getMegaSyncErrorCode((int)error));
 }
 
 @end

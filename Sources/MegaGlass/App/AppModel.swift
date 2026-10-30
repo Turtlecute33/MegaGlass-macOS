@@ -383,7 +383,7 @@ final class AppModel {
         let generation = session.generation
         Task {
             let nodes = await EngineQueue.run {
-                handles.compactMap { source.node($0) }.map { node in
+                handles.compactMap { source.sdk.node(forHandle: $0) }.map { node in
                     source === self.engine ? node : (source.sdk.authorizeNode(node) ?? node)
                 }
             }
@@ -572,18 +572,14 @@ final class AppModel {
     }
 
     /// Makes public links and puts them on the pasteboard, one for each line.
-    func copyLinks(_ handles: [UInt64], expires: Date? = nil) async {
+    func copyLinks(_ handles: [UInt64]) async {
         let sdk = engine.sdk
         var result: [String] = []
         let succeeded = await perform("The link was not created") {
             for node in try await requiredNodes(handles, in: engine) {
                 try validateOperation()
                 let request = try await sdk.request { delegate in
-                    if let expires {
-                        sdk.export(node, expireTime: expires, delegate: delegate)
-                    } else {
-                        sdk.export(node, delegate: delegate)
-                    }
+                    sdk.export(node, delegate: delegate)
                 }
                 guard let link = request.link else {
                     throw MegaFailure(code: -9, message: "MEGA did not return a link for “\(LocalFileSafety.displayName(node.name ?? "the item"))”.")

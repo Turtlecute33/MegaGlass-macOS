@@ -204,6 +204,7 @@ final class AppModel {
     func notify(_ text: String, symbol: String = "checkmark.circle") {
         toastTask?.cancel()
         toast = Toast(text: text, symbol: symbol)
+        AccessibilityNotification.Announcement(text).post()
         toastTask = Task {
             try? await Task.sleep(for: .seconds(2.4))
             guard !Task.isCancelled else { return }

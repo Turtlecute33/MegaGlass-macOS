@@ -154,21 +154,21 @@ private struct TransferRow: View {
                     Button {
                         app.transfers.pause(item, item.state != .paused)
                     } label: {
-                        Image(systemName: item.state == .paused ? "play.circle" : "pause.circle")
+                        Label(item.state == .paused ? "Resume" : "Pause", systemImage: item.state == .paused ? "play.circle" : "pause.circle").labelStyle(.iconOnly)
                     }
                     .help(item.state == .paused ? "Resume" : "Pause")
                 }
                 Button {
                     app.transfers.cancel(item)
                 } label: {
-                    Image(systemName: "xmark.circle")
+                    Label("Cancel", systemImage: "xmark.circle").labelStyle(.iconOnly)
                 }
                 .help("Cancel")
             } else if item.state == .failed {
-                Button { app.transfers.retry(item) } label: { Image(systemName: "arrow.clockwise.circle") }
+                Button { app.transfers.retry(item) } label: { Label("Retry", systemImage: "arrow.clockwise.circle").labelStyle(.iconOnly) }
                     .help("Retry")
             } else if item.isDownload, item.state == .complete {
-                Button { app.transfers.reveal(item) } label: { Image(systemName: "magnifyingglass.circle") }
+                Button { app.transfers.reveal(item) } label: { Label("Show in Finder", systemImage: "magnifyingglass.circle").labelStyle(.iconOnly) }
                     .help("Show in Finder")
             }
         }

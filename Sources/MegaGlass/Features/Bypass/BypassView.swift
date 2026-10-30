@@ -105,11 +105,12 @@ struct BypassView: View {
     /// Ads on or off in the web pages; the page of the panel loads again.
     private var adToggle: some View {
         @Bindable var settings = app.settings
+        let help = settings.bypassBlockAds ? "Ads are blocked. Click to allow them (for a locker that needs them)." : "Ads are allowed. Click to block them."
         return Toggle(isOn: $settings.bypassBlockAds) {
-            Image(systemName: settings.bypassBlockAds ? "shield.lefthalf.filled" : "shield.slash")
+            Label(help, systemImage: settings.bypassBlockAds ? "shield.lefthalf.filled" : "shield.slash").labelStyle(.iconOnly)
         }
         .toggleStyle(.button)
-        .help(settings.bypassBlockAds ? "Ads are blocked. Click to allow them (for a locker that needs them)." : "Ads are allowed. Click to block them.")
+        .help(help)
         .onChange(of: settings.bypassBlockAds) { center.applyAdBlocking(reloadPanel: true) }
     }
 

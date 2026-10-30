@@ -37,7 +37,7 @@ To apply a shared item to a version that has no finding ID, select the shared ID
 | MEGAGLASS-MAC-OPT-03 | Ask before Cancel All when more than one transfer runs | ui-ux | S | low | applied |
 | MEGAGLASS-MAC-OPT-04 | Keep the file extension out of the selection when you rename a file | ui-ux | S | low | applied |
 | MEGAGLASS-MAC-OPT-05 | Release the Bypass panel web view when no job needs the panel | battery | S | low | applied |
-| MEGAGLASS-MAC-OPT-06 | Give the icon-only buttons an accessible name (all screens) | ui-ux | S | low | approved |
+| MEGAGLASS-MAC-OPT-06 | Give the icon-only buttons an accessible name (all screens) | ui-ux | S | low | applied |
 | MEGAGLASS-MAC-OPT-07 | Add Download (⇧⌘D) and Copy Link (no shortcut) to the menu bar | ui-ux | S | low | approved |
 | MEGAGLASS-MAC-OPT-08 | Delete dead members and the duplicate Bypass timeout helper | minimalism | S | low | approved |
 | MEGAGLASS-MAC-OPT-09 | Build only the app product, and link it without exported symbols | minimalism | S | medium | rejected (owner, 2026-10-30) |
@@ -123,7 +123,8 @@ To apply a shared item to a version that has no finding ID, select the shared ID
 - **Safety**: Labels only. Actions, the folder-transfer guard (b64ff30), ad-block behavior, Bypass settings and preference keys do not change.
 - **Verify**: Test with VoiceOver (⌘F5) on the Transfers, Sync and Versions rows.
 - **Effort**: S. **Risk**: low. **Net lines**: about +2 (estimate).
-- **Status**: approved
+- **Verified**: ./scripts/test.sh (116 tests in 11 suites passed) and SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk swift build passed, with no compiler warnings in the changed files. Not checked: no run-time check with VoiceOver (⌘F5) on the Transfers, Sync and Versions rows, and no visual check that the icons and the new Move Up and Move Down tooltips look as before. The tests do not reach the views.
+- **Status**: applied
 
 ### MEGAGLASS-MAC-OPT-07: Add Download (⇧⌘D) and Copy Link (no shortcut) to the menu bar
 

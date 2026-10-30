@@ -90,9 +90,11 @@ struct BypassSettings: View {
                             }
                         }
                         Spacer()
-                        Button { center.move(provider, by: -1) } label: { Image(systemName: "chevron.up") }
+                        Button { center.move(provider, by: -1) } label: { Label("Move Up", systemImage: "chevron.up").labelStyle(.iconOnly) }
+                            .help("Move Up")
                             .disabled(index == 0)
-                        Button { center.move(provider, by: 1) } label: { Image(systemName: "chevron.down") }
+                        Button { center.move(provider, by: 1) } label: { Label("Move Down", systemImage: "chevron.down").labelStyle(.iconOnly) }
+                            .help("Move Down")
                             .disabled(index == center.providers.count - 1)
                     }
                     .buttonStyle(.borderless)

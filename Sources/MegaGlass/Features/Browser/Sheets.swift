@@ -217,7 +217,7 @@ struct ShareSheet: View {
                                     await load()
                                 }
                             } label: {
-                                Image(systemName: "xmark.circle.fill")
+                                Label("Remove access", systemImage: "xmark.circle.fill").labelStyle(.iconOnly)
                             }
                             .buttonStyle(.plain)
                             .help("Remove access")
@@ -466,12 +466,12 @@ struct VersionsSheet: View {
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
-                    Button { app.download([version.id], from: app.engine) } label: { Image(systemName: "arrow.down.circle") }
+                    Button { app.download([version.id], from: app.engine) } label: { Label("Download this version", systemImage: "arrow.down.circle").labelStyle(.iconOnly) }
                         .buttonStyle(.plain)
                         .help("Download this version")
                     if index > 0 {
                         Button("Restore") { Task { await restore(version) } }
-                        Button(role: .destructive) { confirmDelete = version } label: { Image(systemName: "trash") }
+                        Button(role: .destructive) { confirmDelete = version } label: { Label("Delete this version", systemImage: "trash").labelStyle(.iconOnly) }
                             .buttonStyle(.plain)
                             .help("Delete this version")
                     }

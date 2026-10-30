@@ -104,7 +104,7 @@ struct SyncView: View {
                     do { try await center.setRunning(sync, !running) } catch { app.show(error) }
                 }
             } label: {
-                Image(systemName: running ? "pause.circle" : "play.circle")
+                Label(running ? "Pause" : "Resume", systemImage: running ? "pause.circle" : "play.circle").labelStyle(.iconOnly)
             }
             .buttonStyle(.plain)
             .font(.title2)

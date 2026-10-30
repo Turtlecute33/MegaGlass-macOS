@@ -825,11 +825,11 @@ final class BypassCenter {
         do {
             let finished = request
             let redirects = RedirectGuard(keyHeader: api.keyHeader)
-            let reply = try await withTimeout(seconds: provider.timeout) { [session] in
+            let reply = try await RequestDeadline.run(for: .seconds(provider.timeout)) { [session] in
                 try await Self.readReply(session: session, request: finished, delegate: redirects)
             }
             return await Self.outcome(from: reply)
-        } catch is TimeoutError {
+        } catch is RequestDeadline.Timeout {
             return .failed("No answer in time")
         } catch {
             return .failed(error.localizedDescription)
@@ -932,7 +932,7 @@ final class BypassCenter {
     private func fetchPage(_ url: URL) async -> (URL, Int, String)? {
         // The request timeout counts only the time between two bytes: a page that sends
         // slowly has a total limit too.
-        (try? await withTimeout(seconds: 25) { [session] in await Self.readPage(url, session: session) }) ?? nil
+        (try? await RequestDeadline.run(for: .seconds(25)) { [session] in await Self.readPage(url, session: session) }) ?? nil
     }
 
     /// Off the main thread: a page can be large.
@@ -1153,8 +1153,6 @@ final class BypassCenter {
     }
 }
 
-private struct TimeoutError: Error {}
-
 /// The redirects of Bypass requests: never to this Mac or the local network, plain HTTP
 /// goes over HTTPS, and an API key stays on the host of the API (a redirect to another
 /// host, or to plain HTTP, goes on without the key).
@@ -1280,20 +1278,6 @@ nonisolated enum PublicAddress {
         return !(a == 0 || a == 10 || a == 127 || a >= 224
                  || (a == 169 && b == 254) || (a == 172 && (16...31).contains(b))
                  || (a == 192 && b == 168) || (a == 100 && (64...127).contains(b)))
-    }
-}
-
-/// Runs work with a time limit.
-private func withTimeout<T: Sendable>(seconds: Double, _ work: @escaping @Sendable () async throws -> T) async throws -> T {
-    try await withThrowingTaskGroup(of: T.self) { group in
-        group.addTask { try await work() }
-        group.addTask {
-            try await Task.sleep(for: .seconds(seconds))
-            throw TimeoutError()
-        }
-        defer { group.cancelAll() }
-        guard let value = try await group.next() else { throw CancellationError() }
-        return value
     }
 }
 

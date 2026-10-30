@@ -39,7 +39,7 @@ To apply a shared item to a version that has no finding ID, select the shared ID
 | MEGAGLASS-MAC-OPT-05 | Release the Bypass panel web view when no job needs the panel | battery | S | low | applied |
 | MEGAGLASS-MAC-OPT-06 | Give the icon-only buttons an accessible name (all screens) | ui-ux | S | low | applied |
 | MEGAGLASS-MAC-OPT-07 | Add Download (⇧⌘D) and Copy Link (no shortcut) to the menu bar | ui-ux | S | low | applied |
-| MEGAGLASS-MAC-OPT-08 | Delete dead members and the duplicate Bypass timeout helper | minimalism | S | low | approved |
+| MEGAGLASS-MAC-OPT-08 | Delete dead members and the duplicate Bypass timeout helper | minimalism | S | low | applied |
 | MEGAGLASS-MAC-OPT-09 | Build only the app product, and link it without exported symbols | minimalism | S | medium | rejected (owner, 2026-10-30) |
 | MEGAGLASS-MAC-OPT-10 | Restart transfers and API calls when the network comes back | stability | S | medium | rejected (owner, 2026-10-30) |
 | MEGAGLASS-SHARED-4 | VoiceOver reads the toasts (macOS) | ui-ux | S | low | approved |
@@ -150,7 +150,8 @@ To apply a shared item to a version that has no finding ID, select the shared ID
 - **Verify**: Two review findings merged (dead members, duplicate timeout helper): same goal, same kind of change. Apply as two commits. Verify with scripts/test.sh (StabilityTests, BypassChainTests).
 - **Effort**: S. **Risk**: low. **Net lines**: about -60 (estimate).
 - **Shared**: MEGAGLASS-SHARED-6, also in MEGAGLASS-WIN-OPT-09 and in Windows, not listed (TransferItem.ParentPath and NodeHandle) (/Users/user/Documents/Github/MegaGlass-windows). Here, delete the Swift and MEGABridge parts in one commit.
-- **Status**: approved
+- **Verified**: ./scripts/test.sh (116 tests in 11 suites passed) and SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk swift build passed after each of the two commits, with no compiler warnings in the changed files. Not checked: no run-time check in the app of the media player skip keys (← → J L) and of the Bypass API and page time limits.
+- **Status**: applied
 
 ### MEGAGLASS-MAC-OPT-09: Build only the app product, and link it without exported symbols
 

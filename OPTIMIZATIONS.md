@@ -82,7 +82,7 @@ To apply a shared item to a version that has no finding ID, select the shared ID
 - **Verify**: No UI tests exist. Test by hand: one transfer cancels at once; two or more show the dialog.
 - **Effort**: S. **Risk**: low. **Net lines**: about +8 (estimate).
 - **Shared**: MEGAGLASS-SHARED-2, also in MEGAGLASS-WIN-OPT-04 (/Users/user/Documents/Github/MegaGlass-windows). Note: WIN-OPT-04 (d65aef3, branch optimize) asks only when more than one transfer runs or when hidden transfers would also be cancelled. The mac filter (TransfersView.swift:5-18) can hide a running transfer while the button is enabled by hasActivity (:63). activeCount counts all unfinished transfers, also hidden ones, so the dialog gives the full count. Here, ask only when more than one transfer runs, because the owner rule says "not for one item".
-- **Owner decision**: Ask only when more than one transfer runs (owner rule: not for one item). Ignore the note in Shared that WIN-OPT-04 asks every time.
+- **Owner decision**: Ask only when more than one transfer runs (owner rule: not for one item). On Windows, WIN-OPT-04 asks only when more than one transfer runs or when hidden transfers would also be cancelled.
 - **Verified**: ./scripts/test.sh (116 tests in 11 suites passed) and SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk swift build passed, with no compiler warnings in the app sources. Not checked: no run-time check of the UI. The dialog with two or more transfers, and the cancel at once with one transfer, are not tested by hand.
 - **Status**: applied
 
@@ -237,7 +237,7 @@ Items that are not applied:
 - MEGAGLASS-MAC-OPT-10 and MEGAGLASS-SHARED-1: the owner rejected them (2026-10-30) for this version.
 - MEGAGLASS-SHARED-5: the owner rejected it (2026-10-30) for this version.
 
-Checks that the owner must still do by hand on the built app (the tests do not reach the views, menus or web views):
+Checks that the owner must still do by hand on the built app (the tests do not reach the views, menus or web views). On 2026-10-31 the owner chose to skip them: a local build uses the same Keychain session item (app.megaglass.session) as the installed MegaGlass, so a test with a disposable account is not separate from the real session. The code reviews and the 116 tests are the checks of this pass. To do them later, use a second macOS user account:
 
 - MEGAGLASS-MAC-OPT-01: log in with a large resumed queue on a disposable account. The crash fix is traced from the code, not reproduced.
 - MEGAGLASS-MAC-OPT-02: the File menu has no New Window item for previews (also try ⌘N). A restored preview window loads when the account is ready, and a restored folder-link window loads when you open the link in the main window. A new preview window opens at the last size. Known limits: the restored window shows "The file is not available." for a short time; if the restore fails and you then log in by hand, the window shows "This session has closed".

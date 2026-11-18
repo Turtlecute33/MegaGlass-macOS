@@ -102,6 +102,10 @@ Without Homebrew, delete the app. Then, in Keychain Access, delete the items
 - **Clipboard watch**: the app reads a copy only when macOS finds a web address in it. macOS
   gives that answer without the text.
 - **Backups**: the list of open links (with their keys) is not in backups.
+- **No App Sandbox**: the MEGA SDK opens sync, backup and download folders by their plain path,
+  at any time and after a restart. A sandboxed app needs a security-scoped bookmark for each of
+  these folders, and the SDK does not use them. The app has the hardened runtime and runs with
+  the rights of your user.
 - **Logout without network**: the app logs out on this Mac and deletes the local cache. The
   session stays active on the MEGA server until it expires, or until you close it in MEGA on the
   web.

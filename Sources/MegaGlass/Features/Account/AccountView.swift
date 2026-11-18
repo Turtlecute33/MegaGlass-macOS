@@ -190,7 +190,8 @@ struct AccountView: View {
         let sdk = app.engine.sdk
         // The engine stores "disable versions"; a missing value means versions are on.
         let request = try? await sdk.request(accepting: [.apiENoent]) { sdk.getFileVersionsOption(with: $0) }
-        versionsEnabled = !(request?.flag ?? false)
+        // A failed read hides the toggle: it must not show a value that it did not read.
+        versionsEnabled = request.map { !$0.flag }
     }
 
     private func setVersions(_ enabled: Bool) {

@@ -108,8 +108,10 @@ private final class MockAuthentication: SessionAuthentication {
         if let fetchGate { try await withCheckedThrowingContinuation { fetchGate.install($0) } }
         if let fetchFailure { throw fetchFailure }
     }
+    var onLogout: (() -> Void)?
     func logout() async throws {
         logoutCount += 1
+        onLogout?()
         if let logoutFailure { throw logoutFailure }
     }
     func localLogout() async throws {
@@ -270,6 +272,20 @@ struct AuthenticationTests {
         #expect(auth.localLogoutCount == 1)
         #expect(session.phase == .signedOut)
         #expect(credentials.token == nil)
+    }
+
+    @Test func savedSessionIsGoneBeforeTheServerLogout() async throws {
+        let (engine, root) = try makeEngine()
+        defer { engine.shutdown(); try? FileManager.default.removeItem(at: root) }
+        let auth = MockAuthentication(), credentials = MemoryCredentials()
+        let session = Session(engine: engine, authentication: auth, credentials: credentials)
+        await session.start()
+        try await session.signIn(email: "tester@example.invalid", password: "fixture", code: nil)
+        var tokenDuringLogout: String? = "not called"
+        auth.onLogout = { tokenDuringLogout = credentials.token }
+        await session.signOut()
+        #expect(auth.logoutCount == 1)
+        #expect(tokenDuringLogout == nil)
     }
 
     @Test func logoutDuringReloadRejectsStaleCompletion() async throws {

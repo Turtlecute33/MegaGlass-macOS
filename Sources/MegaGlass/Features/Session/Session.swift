@@ -300,6 +300,9 @@ final class Session {
         isSigningOut = true
         generation = UUID() // Invalidate profile, quota and progress callbacks immediately.
         defer { isSigningOut = false }
+        // Forget the saved session first: a quit during the server logout (up to 10 s) must not
+        // log in again at the next launch.
+        do { try credentials.delete() } catch { onError?(error) }
         var local = message != nil
         if !local {
             do { try await authentication.logout() } catch { local = true }
@@ -311,7 +314,6 @@ final class Session {
                 return
             }
         }
-        do { try credentials.delete() } catch { onError?(error) }
         onLoggedOut?()
         if local {
             // The engine keeps its node cache after a local logout; remove it here.

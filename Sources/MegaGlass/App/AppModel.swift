@@ -589,8 +589,11 @@ final class AppModel {
         let succeeded = await perform("The link was not created") {
             for node in try await requiredNodes(handles, in: engine) {
                 try validateOperation()
+                // Keep the expiry of an existing link: an export without a date makes it permanent.
+                let expires = node.expirationTime > 0 ? Date(timeIntervalSince1970: TimeInterval(node.expirationTime)) : nil
                 let request = try await sdk.request { delegate in
-                    sdk.export(node, delegate: delegate)
+                    if let expires { sdk.export(node, expireTime: expires, delegate: delegate) }
+                    else { sdk.export(node, delegate: delegate) }
                 }
                 guard let link = request.link else {
                     throw MegaFailure(code: -9, message: "MEGA did not return a link for “\(LocalFileSafety.displayName(node.name ?? "the item"))”.")

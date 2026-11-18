@@ -351,7 +351,11 @@ struct LinkSheet: View {
         }
         .padding(22)
         .frame(width: 520)
-        .onAppear { requestExport() }
+        .task {
+            // Start from the expiry of an existing link: an export without a date makes it permanent.
+            if let date = await existingExpiry() { expiry = date; useExpiry = true }
+            requestExport()
+        }
         .onChange(of: useExpiry) { requestExport() }
         .onChange(of: expiry) { if useExpiry { requestExport() } }
         .onChange(of: password) { protected = [] }
@@ -365,6 +369,18 @@ struct LinkSheet: View {
     private func copy(_ lines: [String], _ message: String) {
         Pasteboard.copy(lines.joined(separator: "\n"))
         app.notify(message, symbol: "doc.on.doc")
+    }
+
+    /// The earliest expiry of the existing links that did not expire yet.
+    private func existingExpiry() async -> Date? {
+        let sdk = app.engine.sdk
+        var dates: [Date] = []
+        for item in items {
+            guard let node = await sdk.loadNode(item.id), node.expirationTime > 0 else { continue }
+            let date = Date(timeIntervalSince1970: TimeInterval(node.expirationTime))
+            if date > Date() { dates.append(date) }
+        }
+        return dates.min()
     }
 
     private func requestExport() {

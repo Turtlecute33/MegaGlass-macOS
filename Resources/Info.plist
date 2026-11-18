@@ -62,6 +62,16 @@
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.productivity</string>
 	<!-- Files that the app makes (downloads, syncs) get the quarantine flag. Not the app data in ~/Library. -->
+	<key>NSDesktopFolderUsageDescription</key>
+	<string>MegaGlass reads and writes files in this folder when you upload, download or sync them.</string>
+	<key>NSDocumentsFolderUsageDescription</key>
+	<string>MegaGlass reads and writes files in this folder when you upload, download or sync them.</string>
+	<key>NSDownloadsFolderUsageDescription</key>
+	<string>MegaGlass saves your downloads in this folder.</string>
+	<key>NSNetworkVolumesUsageDescription</key>
+	<string>MegaGlass reads and writes files on this volume when you upload, download or sync them.</string>
+	<key>NSRemovableVolumesUsageDescription</key>
+	<string>MegaGlass reads and writes files on this volume when you upload, download or sync them.</string>
 	<key>LSFileQuarantineEnabled</key>
 	<true/>
 	<key>LSFileQuarantineExcludedPathPatterns</key>

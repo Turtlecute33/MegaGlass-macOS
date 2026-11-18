@@ -304,7 +304,8 @@ final class AppModel {
         transfers.shutdown()
         syncs.shutdown()
         engine.shutdown()
-        for link in links.sessions { link.close() }
+        // Not close(): that deletes the caches of the link, which stay for the next run.
+        for link in links.sessions { link.stopAtQuit() }
         // Preview files are cleaned at the next cold start, after all old writers exit.
     }
 

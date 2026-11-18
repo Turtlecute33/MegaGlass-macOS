@@ -223,6 +223,14 @@ final class LinkSession: Identifiable {
         }
     }
 
+    /// At quit: stops the work and the engine, and keeps the caches for the next run.
+    func stopAtQuit() {
+        openingTask?.cancel()
+        peekTask?.cancel()
+        browser?.stop()
+        engine?.shutdown()
+    }
+
     func close() {
         guard !closed else { return }
         closed = true

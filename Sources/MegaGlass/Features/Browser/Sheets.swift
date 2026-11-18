@@ -74,6 +74,9 @@ struct FolderPicker: View {
     @State private var rootHandle: UInt64?
 
     private var current: UInt64? { path.last?.id ?? rootHandle }
+    /// The list still shows the previous folder: a click there must not choose a folder that the
+    /// path does not show.
+    private var stale: Bool { loadedParent != current }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -107,8 +110,11 @@ struct FolderPicker: View {
                 }
             }
             .frame(width: 440, height: 300)
+            .disabled(stale)
             .overlay {
-                if folders.isEmpty {
+                if stale {
+                    ProgressView()
+                } else if folders.isEmpty {
                     Text("No subfolders").foregroundStyle(.secondary)
                 }
             }
@@ -126,6 +132,7 @@ struct FolderPicker: View {
                 }
                 .keyboardShortcut(.defaultAction)
                 .buttonStyle(.glassProminent)
+                .disabled(stale)
             }
         }
         .padding(22)

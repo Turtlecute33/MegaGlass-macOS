@@ -332,7 +332,11 @@ final class Session {
     }
 
     private func cancelLoadingTransaction() async {
-        guard case .loadingAccount = phase, !isSigningOut else { return }
+        switch phase {
+        case .signingIn, .loadingAccount: break
+        default: return
+        }
+        guard !isSigningOut else { return }
         isSigningOut = true
         generation = UUID() // The waiting login, restore or reload stops at its next check.
         defer { isSigningOut = false }

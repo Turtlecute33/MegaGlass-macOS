@@ -274,6 +274,28 @@ struct AuthenticationTests {
         #expect(credentials.token == nil)
     }
 
+    @Test func cancelStopsASignInThatDoesNotFinish() async throws {
+        let (engine, root) = try makeEngine()
+        defer { engine.shutdown(); try? FileManager.default.removeItem(at: root) }
+        let auth = MockAuthentication(), credentials = MemoryCredentials()
+        let gate = AsyncResultGate<Void>()
+        auth.loginGate = gate
+        let session = Session(engine: engine, authentication: auth, credentials: credentials)
+        await session.start()
+        let login = Task { try await session.signIn(email: "tester@example.invalid", password: "fixture", code: nil) }
+        #expect(await eventually { auth.loginCount == 1 })
+        await session.cancelLoading()
+        #expect(auth.localLogoutCount == 1)
+        #expect(session.phase == .signedOut)
+        // The SDK ends the waiting login request when it logs out on this Mac.
+        gate.finish(.failure(MegaFailure(code: -11, message: "Aborted")))
+        await #expect(throws: CancellationError.self) { try await login.value }
+        auth.loginGate = nil
+        try await session.signIn(email: "tester@example.invalid", password: "fixture", code: nil)
+        #expect(session.isSignedIn)
+        await session.signOut()
+    }
+
     @Test func savedSessionIsGoneBeforeTheServerLogout() async throws {
         let (engine, root) = try makeEngine()
         defer { engine.shutdown(); try? FileManager.default.removeItem(at: root) }

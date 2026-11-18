@@ -77,7 +77,12 @@ struct LoginView: View {
                     .keyboardShortcut(.defaultAction)
                     .disabled(busy || !canSubmit)
 
-                    if needsCode {
+                    if busy {
+                        // A way out when the network does not answer.
+                        Button("Cancel") { Task { await app.session.cancelLoading() } }
+                            .buttonStyle(.glass)
+                            .controlSize(.large)
+                    } else if needsCode {
                         Button("Back") {
                             needsCode = false
                             code = ""
@@ -127,6 +132,8 @@ struct LoginView: View {
             } catch let failure as MegaFailure where failure.needsTwoFactorCode {
                 needsCode = true
                 focus = .code
+            } catch is CancellationError {
+                // Stopped with Cancel: no error to show.
             } catch {
                 self.error = error.localizedDescription
                 code = ""

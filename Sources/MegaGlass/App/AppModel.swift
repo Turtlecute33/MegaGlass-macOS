@@ -630,6 +630,11 @@ final class AppModel {
         await perform("The folder was not shared") {
             let node = try await requiredNode(folder, in: engine)
             try validateOperation()
+            if access != .accessUnknown {
+                // A folder that was never shared has no share key, and the share then fails with EKEY.
+                _ = try await sdk.request { sdk.openShareDialog(node, delegate: $0) }
+                try validateOperation()
+            }
             _ = try await sdk.request { sdk.share(node, withEmail: email, level: access.rawValue, delegate: $0) }
             notify(access == .accessUnknown ? "Access removed" : "Shared with \(email)", symbol: "person.2")
         }

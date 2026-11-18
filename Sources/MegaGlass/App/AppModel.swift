@@ -508,6 +508,16 @@ final class AppModel {
         }
     }
 
+    /// Deletes one older version of a file. `remove` would also delete all versions before it.
+    func deleteVersion(_ handle: UInt64) async {
+        await perform("The version was not deleted") {
+            let sdk = engine.sdk
+            let node = try await requiredNode(handle, in: engine)
+            try validateOperation()
+            _ = try await sdk.request { sdk.removeVersionNode(node, delegate: $0) }
+        }
+    }
+
     /// Moves items from the Rubbish Bin back to where they were.
     func restore(_ items: [NodeItem]) async {
         let sdk = engine.sdk

@@ -516,7 +516,7 @@ struct VersionsSheet: View {
     }
 
     private func delete(_ version: NodeItem) async {
-        await app.deletePermanently([version.id], engine: app.engine)
+        await app.deleteVersion(version.id)
         await load()
     }
 }

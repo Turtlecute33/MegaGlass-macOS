@@ -209,7 +209,8 @@ struct ShareSheet: View {
 
             if !shares.isEmpty {
                 List {
-                    ForEach(shares, id: \.email) { share in
+                    // By position: an active and a pending share can have the same e-mail.
+                    ForEach(Array(shares.enumerated()), id: \.offset) { _, share in
                         HStack {
                             Image(systemName: "person.crop.circle")
                             Text(share.email)

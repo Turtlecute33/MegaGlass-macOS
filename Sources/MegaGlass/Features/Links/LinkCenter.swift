@@ -181,8 +181,14 @@ final class LinkSession: Identifiable {
             kind = LinkParser.kind(of: plain)
             await open(using: account, workerThreads: workerThreads)
         } catch {
-            state = .needsPassword
-            title = "Wrong password"
+            guard !closed, !(error is CancellationError) else { return }
+            // The SDK decrypts the link here, with no network: only API_EKEY is a wrong password.
+            if (error as? MegaFailure)?.code == MEGAErrorType.apiEKey.rawValue {
+                state = .needsPassword
+                title = "Wrong password"
+            } else {
+                state = .failed(error.localizedDescription)
+            }
         }
     }
 

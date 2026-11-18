@@ -267,6 +267,16 @@ final class AppModel {
         return nodes
     }
 
+    /// A Rubbish Bin listing can be old: another device can restore an item first. Then a
+    /// permanent delete or a restore must not act on the live item.
+    private func requireInRubbish(_ handles: [UInt64], in source: MegaEngine) async throws {
+        let sdk = source.sdk
+        let all = await EngineQueue.run {
+            handles.allSatisfy { handle in sdk.node(forHandle: handle).map { sdk.isNode(inRubbish: $0) } ?? false }
+        }
+        guard all else { throw MegaFailure(code: -2, message: "An item is no longer in the Rubbish Bin. Refresh and try again.") }
+    }
+
     func shutdown() {
         clipboard.setEnabled(false)
         bypass.shutdown()
@@ -501,7 +511,9 @@ final class AppModel {
     func deletePermanently(_ handles: [UInt64], engine source: MegaEngine) async {
         await perform("The item was not deleted") {
             let sdk = source.sdk
-            for node in try await requiredNodes(handles, in: source) {
+            let nodes = try await requiredNodes(handles, in: source)
+            try await requireInRubbish(handles, in: source)
+            for node in nodes {
                 try validateOperation()
                 _ = try await sdk.request { sdk.remove(node, delegate: $0) }
             }
@@ -522,6 +534,7 @@ final class AppModel {
     func restore(_ items: [NodeItem]) async {
         let sdk = engine.sdk
         let succeeded = await perform("The item was not restored") {
+            try await requireInRubbish(items.map(\.id), in: engine)
             for item in items {
                 let node = try await requiredNode(item.id, in: engine)
                 let previous = item.restoreHandle

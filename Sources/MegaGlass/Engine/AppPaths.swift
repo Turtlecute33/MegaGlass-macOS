@@ -29,6 +29,8 @@ nonisolated enum AppPaths {
     static func ensure(_ url: URL) -> URL {
         try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true,
                                                  attributes: [.posixPermissions: 0o700])
+        // Also a folder that exists from an earlier version or another tool.
+        try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: url.path)
         return url
     }
 

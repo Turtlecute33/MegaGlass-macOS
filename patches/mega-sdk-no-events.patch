@@ -1,0 +1,80 @@
+diff --git a/src/megaclient.cpp b/src/megaclient.cpp
+index 6c359f3..a90694a 100644
+--- a/src/megaclient.cpp
++++ b/src/megaclient.cpp
+@@ -11760,32 +11760,9 @@ error MegaClient::readmiscflags(JSON *json)
+ //            json->getint();
+ //            break;
+         case makeNameid("jid"): // JourneyID value (16-char hex value)
+-            {
+-                string jid;
+-                if (!json->storeobject(&jid))
+-                {
+-                    LOG_err << "Invalid JourneyID (jid)";
+-                    assert(false);
+-                }
+-                if (jid.size() != JourneyID::HEX_STRING_SIZE)
+-                {
+-                    if (!jid.empty()) // If empty, it will be equivalent to no journeyId found (journeyIdFound = false)
+-                    {
+-                        LOG_err << "Invalid JourneyID size (" << jid.size()  << ") expected: " << JourneyID::HEX_STRING_SIZE;
+-                        jid.clear();
+-                        assert(false);
+-                    }
+-                }
+-                else
+-                {
+-                    journeyIdFound = true;
+-                    if (!trackJourneyId()) // If there is already a value and tracking flag is true, do nothing
+-                    {
+-                        LOG_verbose << "[MegaClient::readmiscflags] set jid: '" << jid << "'";
+-                        mJourneyId->setValue(jid);
+-                    }
+-                }
+-            }
++            // MegaGlass: the journey ID is not kept, so the API requests do not include it.
++            // For a value that an earlier version kept, EOO below turns the tracking off.
++            json->storeobject();
+             break;
+         case EOO:
+             {
+@@ -20364,8 +20341,7 @@ void MegaClient::setchunkfailed(string* url)
+ void MegaClient::reportevent(const char* event, const char* details)
+ {
+     LOG_err << "SERVER REPORT: " << event << " DETAILS: " << details;
+-    queueCommand(
+-        new CommandSendReport(this, event, details, Base64Str<MegaClient::USERHANDLE>(me)));
++    // MegaGlass: no telemetry. The report stays in the local log and does not go to the server.
+ }
+ 
+ void MegaClient::reportevent(const char* event, const char* details, int tag)
+@@ -20480,10 +20456,10 @@ void MegaClient::userfeedbackstore(const char *message)
+     queueCommand(new CommandSendReport(this, type.c_str(), message, NULL));
+ }
+ 
+-void MegaClient::sendevent(int event, const char *desc, const char* viewId, bool addJourneyId)
++void MegaClient::sendevent(int event, const char *desc, const char* /*viewId*/, bool /*addJourneyId*/)
+ {
+     LOG_warn << clientname << "Event " << event << ": " << desc;
+-    queueCommand(new CommandSendEvent(this, event, desc, addJourneyId, viewId));
++    // MegaGlass: no telemetry. The event stays in the local log and does not go to the server.
+ }
+ 
+ void MegaClient::sendevent(int event, const char *message, int tag, const char *viewId, bool addJourneyId)
+diff --git a/src/commands.cpp b/src/commands.cpp
+--- a/src/commands.cpp
++++ b/src/commands.cpp
+@@ -1135,11 +1135,8 @@ CommandPutNodes::CommandPutNodes(MegaClient* client,
+ 
+     arg("sm", 1);
+ 
+-    if (pitag)
+-    {
+-        const auto pitagStr = pitagToString(*pitag);
+-        arg("p", pitagStr.c_str());
+-    }
++    // MegaGlass: no analytics tag. The tag only tells MEGA how the operation started.
++    (void)pitag;
+ 
+     if (cauth)
+     {

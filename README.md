@@ -74,8 +74,11 @@ Without Homebrew, delete the app. Then, in Keychain Access, delete the items
 ## Privacy
 
 - No telemetry or analytics in the app.
-- The MEGA SDK sends some diagnostic events to MEGA, for example load times and errors. The SDK
-  has no setting to turn them off.
+- No diagnostic events or error reports go to MEGA. By default, the MEGA SDK sends them, with no
+  setting to turn them off, and some contain file keys, fingerprints and MACs. A local patch stops
+  them. The SDK also does not keep the journey ID that the server can send, so the API requests
+  do not include it. New files and folders go without the analytics tag that tells MEGA how the
+  operation started (upload, import or copy).
 - Your files are encrypted on your Mac before upload.
 - The session token and the API keys are in the login Keychain. The app never stores your
   password.
@@ -87,9 +90,6 @@ Without Homebrew, delete the app. Then, in Keychain Access, delete the items
 <details>
 <summary><b>Privacy and security details</b></summary>
 
-- **SDK reports**: each time the account or a folder link loads, the SDK sends the load time and
-  the item count. It also sends error events, for example a file that it cannot decrypt, or a
-  sync or database problem.
 - **Bypass**: it opens each protector link and its result pages from your internet address. It
   sends the link, and each link that a locker gives back (not the MEGA links), to the enabled
   third-party services, and loads their pages. These services have their own privacy policies.
@@ -206,7 +206,7 @@ saved account.
 | `Sources/MEGABridge` | Objective-C++: sync and backup API, thumbnail processor, engine tuning |
 | `Sources/MegaGlass/Engine` | SDK wrapper, async requests, node snapshots, thumbnails |
 | `Sources/MegaGlass/Features` | Browser, transfers, sync, links, contacts, account, settings, preview |
-| `patches/` | SDK patches: logout signature with sync on; sync safety (failed folder listings, changed volumes); local names in folder downloads |
+| `patches/` | SDK patches: logout signature with sync on; sync safety (failed folder listings, changed volumes); local names in folder downloads; no diagnostic events, journey ID or analytics tag |
 | `scripts/` | Bootstrap, dependency build, app build, icon, signing identity, release, tap |
 
 Not included: Finder integration (it needs Xcode and a paid developer account), chat and

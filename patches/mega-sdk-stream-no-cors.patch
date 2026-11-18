@@ -1,0 +1,28 @@
+diff --git a/src/megaapi_impl.cpp b/src/megaapi_impl.cpp
+index 4a7b77e..ca48eac 100644
+--- a/src/megaapi_impl.cpp
++++ b/src/megaapi_impl.cpp
+@@ -38142,7 +38142,6 @@ string MegaHTTPServer::getResponseForNode(MegaNode *node, MegaHTTPContext* httpc
+         << "Content-Type: text/html; charset=utf-8\r\n"
+         << "Connection: close\r\n"
+         << "Content-Length: " << sweb.size() << "\r\n"
+-        << "Access-Control-Allow-Origin: *\r\n"
+         << "\r\n";
+ 
+     if (httpctx->parser.method != HTTP_HEAD)
+@@ -39454,7 +39453,6 @@ int MegaHTTPServer::streamNode(MegaHTTPContext *httpctx)
+         response << "HTTP/1.1 416 Requested Range Not Satisfiable\r\n"
+             << "Content-Type: " << mimeType << "\r\n"
+             << "Connection: close\r\n"
+-            << "Access-Control-Allow-Origin: *\r\n"
+             << "Accept-Ranges: bytes\r\n"
+             << "Content-Range: bytes 0-0/" << totalSize << "\r\n"
+             << "\r\n";
+@@ -39479,7 +39477,6 @@ int MegaHTTPServer::streamNode(MegaHTTPContext *httpctx)
+     response << "Content-Type: " << mimeType << "\r\n"
+         << "Connection: close\r\n"
+         << "Content-Length: " << len << "\r\n"
+-        << "Access-Control-Allow-Origin: *\r\n"
+         << "Accept-Ranges: bytes\r\n"
+         << "\r\n";
+ 

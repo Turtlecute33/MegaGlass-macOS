@@ -206,7 +206,7 @@ saved account.
 | `Sources/MEGABridge` | Objective-C++: sync and backup API, thumbnail processor, engine tuning |
 | `Sources/MegaGlass/Engine` | SDK wrapper, async requests, node snapshots, thumbnails |
 | `Sources/MegaGlass/Features` | Browser, transfers, sync, links, contacts, account, settings, preview |
-| `patches/` | SDK patches: logout signature with sync on; sync safety (failed folder listings, changed volumes); local names in folder downloads; no diagnostic events, journey ID or analytics tag; a new key for a resumed upload of a changed file |
+| `patches/` | SDK patches: logout signature with sync on; sync safety (failed folder listings, changed volumes); local names in folder downloads; no diagnostic events, journey ID or analytics tag; a new key for a resumed upload of a changed file; no CORS header on the local stream server |
 | `scripts/` | Bootstrap, dependency build, app build, icon, signing identity, release, tap |
 
 Not included: Finder integration (it needs Xcode and a paid developer account), chat and

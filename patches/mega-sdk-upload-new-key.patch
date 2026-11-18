@@ -1,0 +1,18 @@
+diff --git a/src/megaclient.cpp b/src/megaclient.cpp
+index 30be643..a042002 100644
+--- a/src/megaclient.cpp
++++ b/src/megaclient.cpp
+@@ -19720,6 +19720,13 @@ bool MegaClient::startxfer(direction_t d, File* f, TransferDbCommitter& committe
+                         if (f->genfingerprint(fa.get()))
+                         {
+                             LOG_warn << "The local file has been modified: " << t->localfilename;
++                            // MegaGlass: new content needs a new key and CTR IV. With the old ones,
++                            // the storage server gets two ciphertexts made with one keystream.
++                            byte keyctriv[SymmCipher::KEYLENGTH + sizeof(int64_t)];
++                            rng.genblock(keyctriv, sizeof keyctriv);
++                            memcpy(t->transferkey.data(), keyctriv, SymmCipher::KEYLENGTH);
++                            t->ctriv = static_cast<int64_t>(
++                                MemAccess::get<uint64_t>((const char*)keyctriv + SymmCipher::KEYLENGTH));
+                             t->tempurls.clear();
+                             t->discardedTempUrlsSize = 0;
+                             t->chunkmacs.clear();

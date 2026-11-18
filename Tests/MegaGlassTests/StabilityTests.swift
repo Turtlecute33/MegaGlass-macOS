@@ -512,6 +512,15 @@ private actor ListingCounter {
 
 @MainActor
 struct BrowserTests {
+    @Test func anItemInsideASelectedFolderIsNotActedOnTwice() {
+        // 1 contains 2, 2 contains 3; 4 is elsewhere.
+        let parents: [UInt64: UInt64] = [2: 1, 3: 2, 4: 9]
+        let parent: (UInt64) -> UInt64? = { parents[$0] }
+        #expect(AppModel.topLevel([2, 3, 4], parent: parent) == [2, 4])
+        #expect(AppModel.topLevel([3, 1], parent: parent) == [1])
+        #expect(AppModel.topLevel([3, 4], parent: parent) == [3, 4])
+    }
+
     @Test func rapidNavigationRejectsLateListing() async throws {
         let (engine, root) = try makeEngine()
         defer { engine.shutdown(); try? FileManager.default.removeItem(at: root) }

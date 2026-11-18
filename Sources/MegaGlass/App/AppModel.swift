@@ -277,6 +277,27 @@ final class AppModel {
         guard all else { throw MegaFailure(code: -2, message: "An item is no longer in the Rubbish Bin. Refresh and try again.") }
     }
 
+    /// The items that have no selected ancestor. A folder carries its content, so an item inside
+    /// a selected folder must not be copied, downloaded, deleted or restored a second time.
+    nonisolated static func topLevel(_ handles: [UInt64], parent: (UInt64) -> UInt64?) -> [UInt64] {
+        let selected = Set(handles)
+        return handles.filter { handle in
+            var current = parent(handle)
+            while let ancestor = current {
+                if selected.contains(ancestor) { return false }
+                current = parent(ancestor)
+            }
+            return true
+        }
+    }
+
+    private func topLevel(_ handles: [UInt64], in source: MegaEngine) async -> [UInt64] {
+        let sdk = source.sdk
+        return await EngineQueue.run {
+            Self.topLevel(handles) { sdk.node(forHandle: $0)?.parentHandle }
+        }
+    }
+
     func shutdown() {
         clipboard.setEnabled(false)
         bypass.shutdown()
@@ -393,6 +414,7 @@ final class AppModel {
         let target = folder.path.hasSuffix("/") ? folder.path : folder.path + "/"
         let generation = session.generation
         Task {
+            let handles = await topLevel(handles, in: source)
             let nodes = await EngineQueue.run {
                 handles.compactMap { source.sdk.node(forHandle: $0) }.map { node in
                     source === self.engine ? node : (source.sdk.authorizeNode(node) ?? node)
@@ -504,6 +526,7 @@ final class AppModel {
     func moveToRubbish(_ handles: [UInt64]) async {
         let sdk = engine.sdk
         guard let rubbish = await EngineQueue.run({ sdk.rubbishNode?.handle }) else { return }
+        let handles = await topLevel(handles, in: engine)
         guard await move(handles, to: rubbish, quiet: true) else { return }
         notify(handles.count == 1 ? "Moved to Rubbish Bin" : "Moved \(handles.count) items to Rubbish Bin", symbol: "trash")
     }
@@ -511,6 +534,7 @@ final class AppModel {
     func deletePermanently(_ handles: [UInt64], engine source: MegaEngine) async {
         await perform("The item was not deleted") {
             let sdk = source.sdk
+            let handles = await topLevel(handles, in: source)
             let nodes = try await requiredNodes(handles, in: source)
             try await requireInRubbish(handles, in: source)
             for node in nodes {
@@ -535,7 +559,8 @@ final class AppModel {
         let sdk = engine.sdk
         let succeeded = await perform("The item was not restored") {
             try await requireInRubbish(items.map(\.id), in: engine)
-            for item in items {
+            let top = Set(await topLevel(items.map(\.id), in: engine))
+            for item in items where top.contains(item.id) {
                 let node = try await requiredNode(item.id, in: engine)
                 let previous = item.restoreHandle
                 let target = await EngineQueue.run {
@@ -569,7 +594,7 @@ final class AppModel {
         let sdk = engine.sdk
         let succeeded = await perform(source === engine ? "The item was not copied" : "The item was not imported") {
             let target = try await requiredNode(folder, in: engine)
-            for handle in handles {
+            for handle in await topLevel(handles, in: source) {
                 var node = try await requiredNode(handle, in: source)
                 if source !== engine {
                     let link = source.sdk
